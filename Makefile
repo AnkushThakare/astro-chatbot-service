@@ -2,7 +2,7 @@ PY = python
 VENV ?= .venv
 ACTIVATE = . $(VENV)/bin/activate
 
-.PHONY: venv install format lint typecheck test check run
+.PHONY: venv install format lint typecheck test test-docker check run
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -24,6 +24,10 @@ typecheck:
 test:
 	$(ACTIVATE); PYTHONPATH=src pytest
 
+test-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm astro-chatbot-service-test tests
+
 check:
 	$(ACTIVATE); $(MAKE) lint
 	$(ACTIVATE); $(MAKE) typecheck
@@ -31,4 +35,3 @@ check:
 
 run:
 	$(ACTIVATE); PYTHONPATH=src uvicorn app.main:app --reload --port 8010
-

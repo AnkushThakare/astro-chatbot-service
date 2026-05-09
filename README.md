@@ -57,6 +57,20 @@ make typecheck
 make test
 ```
 
+If there is no usable host Python interpreter in your workspace, run tests in Docker instead:
+
+```bash
+docker build -f Dockerfile.test -t astro-chatbot-service-test .
+docker run --rm astro-chatbot-service-test tests
+```
+
+On Windows PowerShell you can use the committed helper:
+
+```powershell
+./scripts/test_in_docker.ps1
+./scripts/test_in_docker.ps1 tests/test_planner.py
+```
+
 ## Astrology Engine Modes
 
 This service keeps astrology behind an adapter boundary so the repo stays separate:
@@ -85,4 +99,5 @@ The local mode is intended for development when `astrology-service` exists nearb
 - Without `GROQ_API_KEY`, the chat endpoint still works but returns a scaffold response.
 - Default database is local SQLite for easy bootstrapping.
 - Point `DATABASE_URL` at your shared database if this repo should reuse an existing store.
+- This workspace may not always have a usable host Python interpreter. The Docker test workflow above is the supported fallback for local verification in that case.
 - Correlation IDs, request IDs, process-time headers, app lifespan bootstrapping, and Makefile-based checks are included to keep the repo aligned with the existing backend standard.

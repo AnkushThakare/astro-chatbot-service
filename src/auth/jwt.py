@@ -17,6 +17,7 @@ class AuthenticatedUser:
     user_id: str
     role: str
     token_type: str
+    raw_token: str
     raw_claims: dict[str, Any]
 
 
@@ -53,6 +54,7 @@ def decode_jwt_token(token: str) -> AuthenticatedUser:
         user_id=str(user_id),
         role=str(claims.get("role", "customer")),
         token_type=str(claims.get("type", "access")),
+        raw_token=token,
         raw_claims=claims,
     )
 

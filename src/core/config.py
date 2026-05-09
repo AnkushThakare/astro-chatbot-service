@@ -41,6 +41,11 @@ class Settings(BaseSettings):
         alias="GROQ_BASE_URL",
     )
     GROQ_TIMEOUT_SECONDS: int = Field(default=30, alias="GROQ_TIMEOUT_SECONDS")
+    CORE_SERVICE_BASE_URL: str = Field(
+        default="http://localhost:8000/api/v1",
+        alias="CORE_SERVICE_BASE_URL",
+    )
+    CORE_SERVICE_TIMEOUT_SECONDS: int = Field(default=20, alias="CORE_SERVICE_TIMEOUT_SECONDS")
     LANGFUSE_SECRET_KEY: str | None = Field(default=None, alias="LANGFUSE_SECRET_KEY")
     LANGFUSE_PUBLIC_KEY: str | None = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
     LANGFUSE_BASE_URL: str | None = Field(

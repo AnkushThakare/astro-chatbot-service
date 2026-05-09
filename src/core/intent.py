@@ -20,12 +20,41 @@ class IntentClassifier:
         prompt_path = settings.prompts_dir / "intent_classifier.txt"
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8").strip()
-        return "Classify the user message into one of: show_kundali, recommend_product, suggest_consultant, general_astrology."
+        return (
+            "Classify the user message into one of: show_kundali, matchmaking, "
+            "book_pooja, recommend_product, suggest_consultant, general_astrology."
+        )
 
     def classify(self, message: str) -> IntentResult:
         text = message.lower()
         if any(term in text for term in ("kundali", "birth chart", "chart", "horoscope")):
             return IntentResult("show_kundali", 0.93, "Detected kundali or chart vocabulary.")
+        if any(
+            term in text
+            for term in (
+                "matchmaking",
+                "guna milan",
+                "gun milan",
+                "compatibility",
+                "kundli match",
+                "marriage match",
+            )
+        ):
+            return IntentResult("matchmaking", 0.92, "Detected matchmaking or compatibility vocabulary.")
+        if any(
+            term in text
+            for term in (
+                "book puja",
+                "book pooja",
+                "book pandit",
+                "puja booking",
+                "pooja booking",
+                "temple booking",
+                "home puja",
+                "temple puja",
+            )
+        ):
+            return IntentResult("book_pooja", 0.91, "Detected puja or booking vocabulary.")
         if any(term in text for term in ("product", "gemstone", "rudraksha", "remedy", "buy")):
             return IntentResult("recommend_product", 0.88, "Detected commerce or remedy vocabulary.")
         if any(term in text for term in ("consultant", "astrologer", "expert", "talk to", "consult")):

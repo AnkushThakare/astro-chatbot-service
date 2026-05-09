@@ -22,6 +22,9 @@ class GroqClient:
         self,
         messages: list[dict[str, str]],
         *,
+        model: str | None = None,
+        temperature: float = 0.4,
+        response_format: dict[str, Any] | None = None,
         session_id: str | None = None,
         user_id: str | None = None,
     ) -> str:
@@ -29,13 +32,15 @@ class GroqClient:
             raise RuntimeError("GROQ_API_KEY is not configured")
 
         payload: dict[str, Any] = {
-            "model": self.settings.GROQ_MODEL,
+            "model": model or self.settings.GROQ_MODEL,
             "messages": messages,
-            "temperature": 0.4,
+            "temperature": temperature,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         headers = {"Authorization": f"Bearer {self.settings.GROQ_API_KEY}"}
         generation = start_llm_generation(
-            model=self.settings.GROQ_MODEL,
+            model=payload["model"],
             messages=messages,
             provider="groq",
             session_id=session_id,

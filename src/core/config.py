@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     LOG_FORMAT_TYPE: str = Field(default="auto", alias="LOG_FORMAT_TYPE")
     GROQ_API_KEY: str | None = Field(default=None, alias="GROQ_API_KEY")
     GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
+    GROQ_PLANNER_MODEL: str = Field(default="llama-3.1-8b-instant", alias="GROQ_PLANNER_MODEL")
     GROQ_BASE_URL: str = Field(
         default="https://api.groq.com/openai/v1",
         alias="GROQ_BASE_URL",

@@ -10,9 +10,9 @@ from src.auth.jwt import AuthenticatedUser
 from src.astro.kundli import compute_full_chart
 from src.core.core_service import CoreServiceClient
 from src.core.emotion import detect_emotion
-from src.core.intent import IntentClassifier, IntentResult
 from src.core.llm import GroqClient
 from src.core.memory import MemoryService
+from src.core.planner import ConversationPlanner, PlannerResult
 from src.core.persona import build_persona_prompt
 from src.core.rag import RAGService
 from src.core.router import pick_model_route
@@ -22,13 +22,15 @@ from src.tools.show_kundali import show_kundali
 
 
 class ChatService:
+    TOOL_CONFIDENCE_THRESHOLD = 0.75
+
     def __init__(self, db: Session, settings: Any) -> None:
         self.db = db
         self.settings = settings
         self.memory_service = MemoryService(db)
         self.rag_service = RAGService()
-        self.intent_classifier = IntentClassifier()
         self.groq_client = GroqClient(settings)
+        self.planner = ConversationPlanner(self.groq_client, settings.GROQ_PLANNER_MODEL)
         self.core_service_client = CoreServiceClient(settings)
 
     @staticmethod
@@ -49,7 +51,7 @@ class ChatService:
 
     @staticmethod
     def _build_local_reply(
-        intent: IntentResult,
+        plan: PlannerResult,
         emotion_label: str,
         kundali_summary: str | None,
         retrieval_matches: list[dict[str, Any]],
@@ -57,9 +59,12 @@ class ChatService:
     ) -> str:
         sections = [
             "Groq is not configured, so this is the local fallback response.",
-            f"Detected intent: {intent.name} (confidence {intent.confidence:.2f}).",
+            f"Planned action: {plan.action} (confidence {plan.confidence:.2f}).",
             f"Detected emotional tone: {emotion_label}.",
         ]
+        if plan.missing_information:
+            sections.append("Missing information: " + ", ".join(plan.missing_information))
+        sections.append(f"Planner reasoning: {plan.reasoning}")
         if kundali_summary:
             sections.append(f"Kundali summary: {kundali_summary}")
         if tool_outputs:
@@ -238,6 +243,70 @@ class ChatService:
             "source": "core-service",
         }
 
+    @staticmethod
+    def _planner_search_query(plan: PlannerResult) -> str | None:
+        query = plan.arguments.get("search_query")
+        if not isinstance(query, str):
+            return None
+        normalized = query.strip()
+        return normalized or None
+
+    @classmethod
+    def _has_required_fields_for_action(
+        cls,
+        plan: PlannerResult,
+        *,
+        birth_details: dict[str, Any] | None,
+        matchmaking_details: dict[str, Any] | None,
+    ) -> bool:
+        if plan.action == "show_kundali":
+            return birth_details is not None
+        if plan.action == "matchmaking":
+            return matchmaking_details is not None
+        if plan.action in {"book_pooja", "recommend_product", "suggest_consultant"}:
+            return cls._planner_search_query(plan) is not None
+        return True
+
+    @classmethod
+    def _should_execute_tool(
+        cls,
+        plan: PlannerResult,
+        *,
+        birth_details: dict[str, Any] | None,
+        matchmaking_details: dict[str, Any] | None,
+    ) -> bool:
+        if not plan.should_call_tool:
+            return False
+        if plan.confidence <= cls.TOOL_CONFIDENCE_THRESHOLD:
+            return False
+        if plan.action not in {
+            "show_kundali",
+            "matchmaking",
+            "book_pooja",
+            "recommend_product",
+            "suggest_consultant",
+        }:
+            return False
+        return cls._has_required_fields_for_action(
+            plan,
+            birth_details=birth_details,
+            matchmaking_details=matchmaking_details,
+        )
+
+    @staticmethod
+    def _format_planner_context(plan: PlannerResult, tool_allowed: bool) -> str:
+        lines = [
+            f"Planner action: {plan.action}",
+            f"Planner confidence: {plan.confidence:.2f}",
+            f"Tool execution allowed: {str(tool_allowed).lower()}",
+            f"Planner reasoning: {plan.reasoning}",
+        ]
+        if plan.arguments:
+            lines.append(f"Planner arguments: {plan.arguments}")
+        if plan.missing_information:
+            lines.append("Missing information: " + ", ".join(plan.missing_information))
+        return "\n".join(lines)
+
     async def _prepare_reply_context(
         self,
         *,
@@ -247,8 +316,20 @@ class ChatService:
         matchmaking_details: dict[str, Any] | None = None,
         current_user: AuthenticatedUser | None = None,
     ) -> dict[str, Any]:
-        intent = self.intent_classifier.classify(message)
-        route = pick_model_route(intent)
+        plan = await self.planner.plan(
+            message=message,
+            has_birth_details=birth_details is not None,
+            has_matchmaking_details=matchmaking_details is not None,
+            is_authenticated=current_user is not None,
+        )
+        tool_execution_allowed = self._should_execute_tool(
+            plan,
+            birth_details=birth_details,
+            matchmaking_details=matchmaking_details,
+        )
+        route = pick_model_route(
+            plan.model_copy(update={"should_call_tool": tool_execution_allowed})
+        )
         emotion = detect_emotion(message)
 
         if birth_details is not None:
@@ -263,18 +344,17 @@ class ChatService:
 
         kundali_summary: str | None = None
         kundali_chart: dict[str, Any] | None = None
-        if birth_details is not None or intent.name == "show_kundali":
-            if birth_details:
-                kundali_chart = await self.core_service_client.generate_kundli(
-                    birth_details,
-                    current_user,
-                )
-                if kundali_chart is None:
-                    kundali_chart = await compute_full_chart(birth_details)
-                kundali_summary = show_kundali(kundali_chart)
+        if tool_execution_allowed and plan.action == "show_kundali" and birth_details is not None:
+            kundali_chart = await self.core_service_client.generate_kundli(
+                birth_details,
+                current_user,
+            )
+            if kundali_chart is None:
+                kundali_chart = await compute_full_chart(birth_details)
+            kundali_summary = show_kundali(kundali_chart)
 
         matchmaking_result: dict[str, Any] | None = None
-        if matchmaking_details is not None:
+        if tool_execution_allowed and plan.action == "matchmaking" and matchmaking_details is not None:
             matchmaking_result = await self.core_service_client.generate_matchmaking(
                 matchmaking_details,
                 current_user,
@@ -285,11 +365,12 @@ class ChatService:
         if matchmaking_output is not None:
             tool_outputs.append(matchmaking_output)
 
-        if intent.name == "book_pooja":
+        search_query = self._planner_search_query(plan)
+        if tool_execution_allowed and plan.action == "book_pooja" and search_query is not None:
             home_puja_services, temple_services, public_pandits = await asyncio.gather(
-                self.core_service_client.list_home_puja_services(message),
-                self.core_service_client.list_temple_services(message),
-                self.core_service_client.list_public_pandits(message),
+                self.core_service_client.list_home_puja_services(search_query),
+                self.core_service_client.list_temple_services(search_query),
+                self.core_service_client.list_public_pandits(search_query),
             )
             booking_output = self._build_booking_tool_output(
                 home_puja_services,
@@ -298,16 +379,16 @@ class ChatService:
             )
             if booking_output is not None:
                 tool_outputs.append(booking_output)
-        if intent.name == "recommend_product":
+        if tool_execution_allowed and plan.action == "recommend_product" and search_query is not None:
             product_output = self._build_product_tool_output(
-                await self.core_service_client.search_products(message),
+                await self.core_service_client.search_products(search_query),
                 kundali_summary=kundali_summary,
             )
             if product_output is not None:
                 tool_outputs.append(product_output)
-        if intent.name == "suggest_consultant":
+        if tool_execution_allowed and plan.action == "suggest_consultant" and search_query is not None:
             consultant_output = self._build_consultant_tool_output(
-                await self.core_service_client.search_pandits(message, current_user),
+                await self.core_service_client.search_pandits(search_query, current_user),
                 kundali_summary=kundali_summary,
             )
             if consultant_output is not None:
@@ -328,6 +409,12 @@ class ChatService:
             tool_context=self._format_tool_context(tool_outputs),
         )
         messages = [{"role": "system", "content": persona_prompt}]
+        messages.append(
+            {
+                "role": "system",
+                "content": self._format_planner_context(plan, tool_execution_allowed),
+            }
+        )
         messages.extend(recent_messages)
         messages.append({"role": "user", "content": message})
 
@@ -336,7 +423,7 @@ class ChatService:
             metadata_json = str({"user_id": current_user.user_id, "role": current_user.role})
 
         return {
-            "intent": intent,
+            "plan": plan,
             "route": route,
             "emotion": emotion,
             "messages": messages,
@@ -348,11 +435,10 @@ class ChatService:
             "metadata_json": metadata_json,
             "message": message,
             "session_id": session_id,
-            "current_user": current_user,
         }
 
     def _persist_chat_turns(self, context: dict[str, Any], reply: str) -> None:
-        intent = context["intent"]
+        plan = context["plan"]
         route = context["route"]
 
         self.memory_service.repository.add_turn(
@@ -360,7 +446,7 @@ class ChatService:
             "user",
             context["message"],
             provider="client",
-            intent=intent.name,
+            intent=plan.action,
             metadata_json=context["metadata_json"],
         )
         self.memory_service.repository.add_turn(
@@ -369,7 +455,7 @@ class ChatService:
             reply,
             provider=route.provider,
             model=route.model,
-            intent=intent.name,
+            intent=plan.action,
             metadata_json=str({"reasoning_profile": route.reasoning_profile}),
         )
 
@@ -389,7 +475,7 @@ class ChatService:
             matchmaking_details=matchmaking_details,
             current_user=current_user,
         )
-        intent = context["intent"]
+        plan = context["plan"]
         route = context["route"]
 
         if self.groq_client.is_configured:
@@ -400,7 +486,7 @@ class ChatService:
             )
         else:
             reply = self._build_local_reply(
-                intent,
+                plan,
                 context["emotion"].label,
                 context["kundali_summary"],
                 context["retrieval_matches"],
@@ -411,7 +497,8 @@ class ChatService:
 
         return {
             "reply": reply,
-            "intent": intent.name,
+            "intent": plan.action,
+            "planner_confidence": plan.confidence,
             "tool_outputs": context["tool_outputs"],
             "retrieval_matches": context["retrieval_matches"],
             "kundali_chart": context["kundali_chart"],
@@ -437,13 +524,14 @@ class ChatService:
             matchmaking_details=matchmaking_details,
             current_user=current_user,
         )
-        intent = context["intent"]
+        plan = context["plan"]
 
         yield (
             "meta",
             {
                 "resolved_session_id": session_id,
-                "intent": intent.name,
+                "intent": plan.action,
+                "planner_confidence": plan.confidence,
                 "tool_count": len(context["tool_outputs"]),
             },
         )
@@ -459,7 +547,7 @@ class ChatService:
                 yield ("message", {"delta": delta})
         else:
             fallback_reply = self._build_local_reply(
-                intent,
+                plan,
                 context["emotion"].label,
                 context["kundali_summary"],
                 context["retrieval_matches"],
@@ -489,6 +577,6 @@ class ChatService:
             {
                 "resolved_session_id": session_id,
                 "reply": reply,
-                "intent": intent.name,
+                "intent": plan.action,
             },
         )

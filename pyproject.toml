@@ -1,0 +1,69 @@
+[project]
+name = "astro-chatbot-service"
+version = "0.1.0"
+description = "Standalone chatbot backend with Groq, astrology, RAG, memory, and fine-tuning scaffolding."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "aiosqlite>=0.20,<1.0",
+  "asyncpg>=0.30,<1.0",
+  "fastapi>=0.115,<1.0",
+  "httpx>=0.28,<1.0",
+  "langfuse>=2.0,<3.0",
+  "psycopg2-binary>=2.9,<3.0",
+  "pydantic-settings>=2.6,<3.0",
+  "python-jose[cryptography]>=3.3,<4.0",
+  "python-json-logger>=2.0,<4.0",
+  "sqlalchemy>=2.0,<3.0",
+  "uvicorn[standard]>=0.32,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.13,<2.0",
+  "pytest>=8.3,<9.0",
+  "pytest-cov>=6.0,<7.0",
+  "ruff>=0.8,<1.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+  ".git",
+  "__pycache__",
+  ".venv",
+  "venv",
+  "build",
+  "dist",
+  "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+no_implicit_optional = true
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers --cov=src --cov-report=term-missing"
+markers = [
+  "api_flow: End-to-end API flow tests hitting HTTP endpoints",
+  "unit: Unit tests",
+  "integration: Integration tests",
+]

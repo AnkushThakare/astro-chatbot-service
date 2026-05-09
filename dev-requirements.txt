@@ -1,0 +1,6 @@
+-r requirements.txt
+alembic>=1.14,<2.0
+mypy>=1.13,<2.0
+pytest>=8.3,<9.0
+pytest-cov>=6.0,<7.0
+ruff>=0.8,<1.0

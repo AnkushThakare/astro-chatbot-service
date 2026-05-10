@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -62,19 +63,54 @@ def check_environment() -> tuple[Any, Any, Any, Any, Any]:
         )
 
     try:
+        from unsloth import FastLanguageModel
         from datasets import Dataset
         from transformers import TrainingArguments
         from trl import SFTTrainer
-        from unsloth import FastLanguageModel
     except ImportError as exc:
         raise SystemExit(
             "Training dependencies are missing. Install packages/finetuning/requirements.txt."
         ) from exc
 
     return torch, Dataset, TrainingArguments, SFTTrainer, FastLanguageModel
+
+
 def build_dataset(dataset_cls: Any, tokenizer: Any, rows: list[dict[str, Any]]) -> Any:
     formatted = [{"text": format_chat_example(tokenizer, row, include_output=True)} for row in rows]
     return dataset_cls.from_list(formatted)
+
+
+def build_trainer(
+    *,
+    trainer_cls: Any,
+    model: Any,
+    tokenizer: Any,
+    train_dataset: Any,
+    eval_dataset: Any,
+    training_args: Any,
+    max_seq_length: int,
+) -> Any:
+    init_params = inspect.signature(trainer_cls.__init__).parameters
+    trainer_kwargs: dict[str, Any] = {
+        "model": model,
+        "train_dataset": train_dataset,
+        "eval_dataset": eval_dataset,
+        "args": training_args,
+    }
+
+    if "tokenizer" in init_params:
+        trainer_kwargs["tokenizer"] = tokenizer
+    elif "processing_class" in init_params:
+        trainer_kwargs["processing_class"] = tokenizer
+
+    if "dataset_text_field" in init_params:
+        trainer_kwargs["dataset_text_field"] = "text"
+    if "max_seq_length" in init_params:
+        trainer_kwargs["max_seq_length"] = max_seq_length
+    if "packing" in init_params:
+        trainer_kwargs["packing"] = False
+
+    return trainer_cls(**trainer_kwargs)
 
 
 def main() -> int:
@@ -136,15 +172,14 @@ def main() -> int:
         seed=3407,
     )
 
-    trainer = trainer_cls(
+    trainer = build_trainer(
+        trainer_cls=trainer_cls,
         model=model,
         tokenizer=tokenizer,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        dataset_text_field="text",
+        training_args=training_args,
         max_seq_length=args.max_seq_length,
-        packing=False,
-        args=training_args,
     )
 
     print("Starting supervised fine-tuning...")

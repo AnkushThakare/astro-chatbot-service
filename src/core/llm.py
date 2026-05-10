@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -7,7 +8,19 @@ from typing import Any
 import httpx
 
 from src.core.config import Settings
+from src.core.logging import get_logger
 from src.observability.langfuse import end_llm_generation, fail_llm_generation, start_llm_generation
+
+logger = get_logger(__name__)
+
+MAX_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+
+
+def _is_retryable_groq(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {429, 500, 502, 503, 504}
+    return isinstance(exc, (httpx.TimeoutException, httpx.ConnectError))
 
 
 class GroqClient:
@@ -46,17 +59,30 @@ class GroqClient:
             session_id=session_id,
             user_id=user_id,
         )
-        async with httpx.AsyncClient(timeout=self.settings.GROQ_TIMEOUT_SECONDS) as client:
+        last_exc: Exception | None = None
+        response: httpx.Response | None = None
+        for attempt in range(1 + MAX_RETRIES):
             try:
-                response = await client.post(
-                    f"{self.settings.GROQ_BASE_URL}/chat/completions",
-                    json=payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
+                async with httpx.AsyncClient(timeout=self.settings.GROQ_TIMEOUT_SECONDS) as client:
+                    response = await client.post(
+                        f"{self.settings.GROQ_BASE_URL}/chat/completions",
+                        json=payload,
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    break
             except Exception as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES and _is_retryable_groq(exc):
+                    wait = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                    logger.info("Retrying Groq generate (attempt %d/%d) after %.1fs: %s", attempt + 1, MAX_RETRIES, wait, exc)
+                    await asyncio.sleep(wait)
+                    continue
                 fail_llm_generation(generation, str(exc))
                 raise
+        if response is None:
+            fail_llm_generation(generation, str(last_exc))
+            raise last_exc  # type: ignore[misc]
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
         usage = data.get("usage") if isinstance(data, dict) else None
@@ -109,34 +135,56 @@ class GroqClient:
         )
         accumulated_parts: list[str] = []
 
-        async with httpx.AsyncClient(timeout=self.settings.GROQ_TIMEOUT_SECONDS) as client:
+        last_connect_exc: Exception | None = None
+        for attempt in range(1 + MAX_RETRIES):
             try:
-                async with client.stream(
+                client = httpx.AsyncClient(timeout=self.settings.GROQ_TIMEOUT_SECONDS)
+                response_ctx = client.stream(
                     "POST",
                     f"{self.settings.GROQ_BASE_URL}/chat/completions",
                     json=payload,
                     headers=headers,
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        chunk = line[6:].strip()
-                        if chunk == "[DONE]":
-                            break
-                        try:
-                            parsed = json.loads(chunk)
-                        except json.JSONDecodeError:
-                            continue
-
-                        delta_text = self._extract_delta_content(parsed)
-                        if not delta_text:
-                            continue
-
-                        accumulated_parts.append(delta_text)
-                        yield delta_text
+                )
+                response = await response_ctx.__aenter__()
+                response.raise_for_status()
+                break
             except Exception as exc:
+                last_connect_exc = exc
+                await client.aclose()
+                if attempt < MAX_RETRIES and _is_retryable_groq(exc):
+                    wait = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                    logger.info("Retrying Groq stream (attempt %d/%d) after %.1fs: %s", attempt + 1, MAX_RETRIES, wait, exc)
+                    await asyncio.sleep(wait)
+                    continue
                 fail_llm_generation(generation, str(exc))
                 raise
+        else:
+            fail_llm_generation(generation, str(last_connect_exc))
+            raise last_connect_exc  # type: ignore[misc]
+
+        try:
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                chunk = line[6:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    parsed = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+
+                delta_text = self._extract_delta_content(parsed)
+                if not delta_text:
+                    continue
+
+                accumulated_parts.append(delta_text)
+                yield delta_text
+        except Exception as exc:
+            fail_llm_generation(generation, str(exc))
+            raise
+        finally:
+            await response_ctx.__aexit__(None, None, None)
+            await client.aclose()
 
         end_llm_generation(generation, output="".join(accumulated_parts), usage=None)

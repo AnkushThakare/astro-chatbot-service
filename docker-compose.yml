@@ -19,17 +19,17 @@ services:
     build: .
     env_file:
       - .env
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8010
     environment:
       APP_ENV: development
       APP_HOST: 0.0.0.0
-      APP_PORT: 8000
-      CORE_SERVICE_BASE_URL: http://host.docker.internal:8000/api/v1
+      APP_PORT: 8010
+      CORE_SERVICE_BASE_URL: ${CORE_SERVICE_BASE_URL:-http://host.docker.internal:8000/api/v1}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/astro_chatbot
       ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/astro_chatbot
       ASTROLOGY_ENGINE_MODE: stub
     ports:
-      - "8000:8000"
+      - "8010:8010"
     depends_on:
       - postgres
       - redis

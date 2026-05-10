@@ -1,1 +1,9 @@
+Summarize the following astrology consultation conversation in 2-4 sentences. Focus on:
+1. What the user wanted (their primary question or concern)
+2. What action was taken (kundali reading, product suggestion, consultant referral, etc.)
+3. Any unresolved follow-ups or next steps
 
+Be factual and concise. Do not add interpretation beyond what was discussed.
+
+Conversation:
+{conversation}

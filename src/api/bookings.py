@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from src.auth.jwt import AuthenticatedUser, get_current_user
 from src.core.config import settings
-from src.core.core_service import CoreServiceClient
+from src.core.core_service import CoreServiceClient, CoreServiceError
 
 router = APIRouter()
 
@@ -24,31 +24,40 @@ def _core_service_failure(detail: str) -> HTTPException:
 
 @router.get("/booking/services")
 async def list_booking_services(
-    search: str | None = Query(default=None, min_length=1),
+    search: str | None = Query(default=None),
     limit: int = Query(default=3, ge=1, le=20),
 ) -> dict[str, Any]:
     core_service_client = CoreServiceClient(settings)
-    items = await core_service_client.list_home_puja_services(search or "", limit=limit)
+    try:
+        items = await core_service_client.list_home_puja_services(search or "", limit=limit)
+    except CoreServiceError as exc:
+        raise _core_service_failure(str(exc)) from exc
     return {"items": items}
 
 
 @router.get("/booking/temple-services")
 async def list_temple_booking_services(
-    search: str | None = Query(default=None, min_length=1),
+    search: str | None = Query(default=None),
     limit: int = Query(default=3, ge=1, le=20),
 ) -> dict[str, Any]:
     core_service_client = CoreServiceClient(settings)
-    items = await core_service_client.list_temple_services(search or "", limit=limit)
+    try:
+        items = await core_service_client.list_temple_services(search or "", limit=limit)
+    except CoreServiceError as exc:
+        raise _core_service_failure(str(exc)) from exc
     return {"items": items}
 
 
 @router.get("/booking/pandits")
 async def list_booking_pandits(
-    search: str | None = Query(default=None, min_length=1),
+    search: str | None = Query(default=None),
     limit: int = Query(default=3, ge=1, le=20),
 ) -> dict[str, Any]:
     core_service_client = CoreServiceClient(settings)
-    items = await core_service_client.list_public_pandits(search or "", limit=limit)
+    try:
+        items = await core_service_client.list_public_pandits(search or "", limit=limit)
+    except CoreServiceError as exc:
+        raise _core_service_failure(str(exc)) from exc
     return {"items": items}
 
 
@@ -58,10 +67,13 @@ async def preview_booking_price(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     core_service_client = CoreServiceClient(settings)
-    result = await core_service_client.preview_home_puja_price(
-        request.model_dump(mode="json"),
-        current_user,
-    )
+    try:
+        result = await core_service_client.preview_home_puja_price(
+            request.model_dump(mode="json"),
+            current_user,
+        )
+    except CoreServiceError as exc:
+        raise _core_service_failure(str(exc)) from exc
     if result is None:
         raise _core_service_failure("Unable to preview booking price right now.")
     return result
@@ -73,7 +85,10 @@ async def create_home_puja_booking_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     core_service_client = CoreServiceClient(settings)
-    result = await core_service_client.create_home_puja_booking(request, current_user)
+    try:
+        result = await core_service_client.create_home_puja_booking(request, current_user)
+    except CoreServiceError as exc:
+        raise _core_service_failure(str(exc)) from exc
     if result is None:
         raise _core_service_failure("Unable to create home puja booking right now.")
     return result
@@ -85,7 +100,10 @@ async def create_temple_booking_endpoint(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     core_service_client = CoreServiceClient(settings)
-    result = await core_service_client.create_temple_booking(request, current_user)
+    try:
+        result = await core_service_client.create_temple_booking(request, current_user)
+    except CoreServiceError as exc:
+        raise _core_service_failure(str(exc)) from exc
     if result is None:
         raise _core_service_failure("Unable to create temple booking right now.")
     return result

@@ -1,0 +1,70 @@
+Common Astrology Concepts - Quick Reference
+
+Kundali (Birth Chart / Horoscope)
+A kundali is a map of the sky at the exact moment of a person's birth. It shows the positions of all nine planets (navagraha) across 12 houses and 12 zodiac signs. A kundali reading reveals personality traits, life patterns, strengths, challenges, and timing of major life events.
+
+Requirements for generating a kundali:
+- Exact date of birth
+- Exact time of birth (as precise as possible)
+- Place of birth (for latitude, longitude, and timezone)
+
+The 12 Houses (Bhava)
+1st House (Lagna/Ascendant): Self, personality, physical appearance, health
+2nd House: Wealth, family, speech, food habits
+3rd House: Siblings, courage, communication, short travel
+4th House: Mother, home, property, vehicles, comfort
+5th House: Children, education, creativity, romance, past-life merit
+6th House: Enemies, diseases, debts, daily work, service
+7th House: Marriage, partnerships, business, spouse
+8th House: Longevity, sudden events, inheritance, transformation
+9th House: Father, luck, dharma, long travel, higher learning, guru
+10th House: Career, profession, status, public image
+11th House: Gains, income, friends, aspirations, elder siblings
+12th House: Losses, expenses, foreign travel, spirituality, moksha
+
+Navagraha (Nine Planets)
+Sun (Surya) - Soul, authority, father, government
+Moon (Chandra) - Mind, emotions, mother, public
+Mars (Mangal) - Energy, courage, property, siblings
+Mercury (Budh) - Intelligence, communication, business
+Jupiter (Guru/Brihaspati) - Wisdom, wealth, children, spirituality
+Venus (Shukra) - Love, beauty, luxury, marriage
+Saturn (Shani) - Discipline, karma, delays, longevity
+Rahu - Illusion, foreign connections, obsessions
+Ketu - Spirituality, detachment, past-life karma
+
+Important Yogas (Combinations)
+Raj Yoga: Combination promising power, authority, success
+Gaja Kesari Yoga: Jupiter in kendra from Moon — wisdom and reputation
+Mangal Dosha: Mars in 1st, 2nd, 4th, 7th, 8th, or 12th house — affects marriage compatibility
+Kaal Sarp Dosha: All planets between Rahu and Ketu — struggles and sudden changes
+Sade Sati: Saturn transiting over natal Moon (7.5 year period) — tests and transformation
+
+Dasha System
+The Vimshottari Dasha system divides a person's life into planetary periods:
+- Each planet rules for a fixed number of years
+- The dasha sequence depends on the Moon's nakshatra at birth
+- Major periods (Mahadasha) are subdivided into sub-periods (Antardasha)
+- Understanding current dasha helps explain what phase of life a person is in
+
+Guna Milan (Matchmaking)
+Traditional Vedic matchmaking compares two kundalis across 8 categories (Ashtakoota):
+- Varna (1 point) - Spiritual compatibility
+- Vashya (2 points) - Mutual attraction
+- Tara (3 points) - Health and well-being
+- Yoni (4 points) - Sexual compatibility
+- Graha Maitri (5 points) - Mental compatibility
+- Gana (6 points) - Temperament match
+- Bhakoot (7 points) - Family and financial harmony
+- Nadi (8 points) - Health and genetic compatibility
+
+Total: 36 points. Generally 18+ points is considered acceptable for marriage.
+
+Transit (Gochar)
+Transits refer to the current positions of planets as they move through the zodiac, compared against the natal chart. Important transits include:
+- Saturn transit (Shani Gochar) - changes every ~2.5 years per sign
+- Jupiter transit (Guru Gochar) - changes every ~1 year per sign
+- Rahu-Ketu transit - changes every ~1.5 years
+
+Nakshatra (Lunar Mansions)
+The 27 nakshatras are divisions of the zodiac based on the Moon's position. Each nakshatra has unique characteristics, ruling deity, and associated planet. Birth nakshatra determines the starting dasha and influences personality.

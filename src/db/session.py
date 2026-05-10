@@ -32,8 +32,22 @@ def configure_database(
     if async_engine is not None:
         async_engine.sync_engine.dispose()
 
-    sync_engine = create_engine(resolved_sync, future=True, connect_args=sync_connect_args)
-    async_engine = create_async_engine(resolved_async, future=True)
+    is_sqlite = resolved_sync.startswith("sqlite")
+    pool_kwargs: dict = {}
+    if not is_sqlite:
+        pool_kwargs = {
+            "pool_size": 10,
+            "max_overflow": 20,
+            "pool_pre_ping": True,
+            "pool_recycle": 1800,
+        }
+
+    sync_engine = create_engine(
+        resolved_sync, future=True, connect_args=sync_connect_args, **pool_kwargs,
+    )
+    async_engine = create_async_engine(
+        resolved_async, future=True, **pool_kwargs,
+    )
     SessionLocal.configure(bind=sync_engine)
     AsyncSessionLocal.configure(bind=async_engine)
     return sync_engine, async_engine

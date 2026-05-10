@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy.orm import Session
@@ -10,6 +12,9 @@ from src.api.matchmaking import MatchmakingDetails
 from src.auth.jwt import AuthenticatedUser, get_optional_current_user
 from src.core.chat_service import ChatService
 from src.core.config import settings
+from src.core.llm import GroqClient
+from src.core.memory import MemoryService
+from src.core.rate_limit import check_rate_limit
 from src.core.streaming import sse_event
 from src.db.session import get_db
 
@@ -23,7 +28,7 @@ class ChatMessageRequest(BaseModel):
     matchmaking_details: MatchmakingDetails | None = None
 
 
-@router.post("/chat/message")
+@router.post("/chat/message", dependencies=[Depends(check_rate_limit)])
 async def chat_message(
     request: ChatMessageRequest,
     db: Session = Depends(get_db),
@@ -57,3 +62,31 @@ async def chat_message(
             "Connection": "keep-alive",
         },
     )
+
+
+class SessionSummaryRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+
+
+@router.post("/chat/summarize")
+async def summarize_session(
+    request: SessionSummaryRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Generate summary and extract facts for a session."""
+    groq = GroqClient(settings)
+    if not groq.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM not configured",
+        )
+
+    memory = MemoryService(db)
+    summary = await memory.summarize_conversation(request.session_id, groq)
+    facts = await memory.extract_and_store_facts(request.session_id, groq)
+
+    return {
+        "session_id": request.session_id,
+        "summary": summary,
+        "extracted_facts": facts,
+    }

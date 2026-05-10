@@ -56,7 +56,9 @@ Decision guidance:
 - book_pooja:
   - User explicitly wants puja booking, temple service booking, or home puja options.
 - recommend_product:
-  - User explicitly wants remedies/products like rudraksha, gemstones, yantras, malas, lockets, items to buy.
+  - User explicitly wants remedies/products like rudraksha, rudraksha mala, bracelets, or other items to buy.
+  - Our catalog only carries: rudraksha (various mukhi), rudraksha mala, and bracelets (energy, protection, planetary). NEVER suggest gemstones, yantras, sapphires, rubies, emeralds, pukhraj, neelam, panna, or moonga — these are not in our catalog.
+  - If a user asks about a product not in the catalog, route to recommend_product anyway with a search_query describing what they want — the catalog API will return only items we actually sell.
   - Treat "suggest", "recommend", "which one should I buy", "what should I wear", and "what remedy product" as product intent when they refer to a purchasable item.
   - Do not confuse general remedy advice with product recommendations unless a product/item is explicitly requested.
   - The actual product suggestion must come from the catalog search results, not from model memory.
@@ -79,17 +81,25 @@ User: "Suggest a rudraksha for career growth."
 Output:
 {"action":"recommend_product","confidence":0.90,"arguments":{"search_query":"rudraksha career growth"},"missing_information":[],"should_call_tool":true,"reasoning":"The user wants a remedy product recommendation."}
 
-User: "Which gemstone should I buy for marriage delay?"
+User: "Mujhe rudraksha chahiye"
 Output:
-{"action":"recommend_product","confidence":0.91,"arguments":{"search_query":"gemstone marriage delay"},"missing_information":[],"should_call_tool":true,"reasoning":"The user explicitly wants a purchasable remedy product."}
+{"action":"recommend_product","confidence":0.95,"arguments":{"search_query":"rudraksha"},"missing_information":[],"should_call_tool":true,"reasoning":"The user explicitly wants a rudraksha product."}
 
-User: "Recommend a yantra for money problems."
+User: "Show me rudraksh mala for meditation"
 Output:
-{"action":"recommend_product","confidence":0.90,"arguments":{"search_query":"yantra money problems"},"missing_information":[],"should_call_tool":true,"reasoning":"The user is explicitly asking for a remedy product recommendation."}
+{"action":"recommend_product","confidence":0.92,"arguments":{"search_query":"rudraksha mala meditation"},"missing_information":[],"should_call_tool":true,"reasoning":"The user wants a rudraksha mala product."}
 
-User: "What should I wear for career luck, rudraksha or gemstone?"
+User: "Bracelet for protection"
 Output:
-{"action":"recommend_product","confidence":0.89,"arguments":{"search_query":"career luck rudraksha gemstone"},"missing_information":[],"should_call_tool":true,"reasoning":"The user wants help choosing between purchasable remedy products."}
+{"action":"recommend_product","confidence":0.88,"arguments":{"search_query":"protection bracelet"},"missing_information":[],"should_call_tool":true,"reasoning":"The user wants a protection bracelet from the catalog."}
+
+User: "What rudraksh should I wear for Saturn problems?"
+Output:
+{"action":"recommend_product","confidence":0.90,"arguments":{"search_query":"saturn rudraksha"},"missing_information":[],"should_call_tool":true,"reasoning":"The user wants a rudraksha remedy for a planetary concern."}
+
+User: "5 mukhi rudraksha price"
+Output:
+{"action":"recommend_product","confidence":0.95,"arguments":{"search_query":"5 mukhi rudraksha"},"missing_information":[],"should_call_tool":true,"reasoning":"The user wants pricing on a specific rudraksha product."}
 
 User: "Tell me remedies for career growth."
 Output:

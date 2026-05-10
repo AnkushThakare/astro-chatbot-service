@@ -2,7 +2,7 @@ PY = python
 VENV ?= .venv
 ACTIVATE = . $(VENV)/bin/activate
 
-.PHONY: venv install format lint typecheck test test-docker eval-planner-docker check run
+.PHONY: venv install format lint typecheck test test-docker eval-planner-docker check run ingest-rag
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -13,16 +13,16 @@ install:
 	$(ACTIVATE); pip install -r requirements.txt -r dev-requirements.txt
 
 format:
-	$(ACTIVATE); ruff format app src tests
+	$(ACTIVATE); ruff format src tests
 
 lint:
-	$(ACTIVATE); ruff check app src tests
+	$(ACTIVATE); ruff check src tests
 
 typecheck:
-	$(ACTIVATE); mypy app src
+	$(ACTIVATE); mypy src
 
 test:
-	$(ACTIVATE); PYTHONPATH=src pytest
+	$(ACTIVATE); PYTHONPATH=. pytest
 
 test-docker:
 	docker build -f Dockerfile.test -t astro-chatbot-service-test .
@@ -33,9 +33,13 @@ eval-planner-docker:
 	docker run --rm --entrypoint python astro-chatbot-service-test finetune/eval.py
 
 check:
+	$(ACTIVATE); $(MAKE) format
 	$(ACTIVATE); $(MAKE) lint
 	$(ACTIVATE); $(MAKE) typecheck
-	$(ACTIVATE); PYTHONPATH=src $(MAKE) test
+	$(ACTIVATE); $(MAKE) test
 
 run:
-	$(ACTIVATE); PYTHONPATH=src uvicorn app.main:app --reload --port 8010
+	$(ACTIVATE); uvicorn src.main:app --reload --port 8010
+
+ingest-rag:
+	$(ACTIVATE); python -m scripts.embed_astrology_texts

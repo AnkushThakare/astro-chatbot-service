@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -11,11 +12,61 @@ from src.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+MAX_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return True for transient errors worth retrying."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, (httpx.TimeoutException, httpx.ConnectError))
+
+
+class CoreServiceError(Exception):
+    """Raised when a core-service call fails with a non-transient error."""
+
 
 class CoreServiceClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.base_url = settings.CORE_SERVICE_BASE_URL.rstrip("/")
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        """Send an HTTP request with automatic retry on transient failures."""
+        last_exc: Exception | None = None
+        for attempt in range(1 + MAX_RETRIES):
+            try:
+                async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
+                    response = await client.request(
+                        method,
+                        f"{self.base_url}{path}",
+                        headers=headers,
+                        params=params,
+                        json=json,
+                    )
+                    response.raise_for_status()
+                    return response
+            except Exception as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES and _is_retryable(exc):
+                    wait = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                    logger.info(
+                        "Retrying %s %s (attempt %d/%d) after %.1fs: %s",
+                        method, path, attempt + 1, MAX_RETRIES, wait, exc,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
 
     def _build_headers(
         self,
@@ -95,14 +146,10 @@ class CoreServiceClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    f"{self.base_url}/astrology/kundli",
-                    json=request_payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await self._request(
+                "POST", "/astrology/kundli", headers=headers, json=request_payload,
+            )
+            return response.json()
         except Exception as exc:
             logger.warning("Core-service kundli call failed: %s", exc)
             return None
@@ -141,14 +188,10 @@ class CoreServiceClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    f"{self.base_url}/astrology/matchmaking",
-                    json=request_payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await self._request(
+                "POST", "/astrology/matchmaking", headers=headers, json=request_payload,
+            )
+            return response.json()
         except Exception as exc:
             logger.warning("Core-service matchmaking call failed: %s", exc)
             return None
@@ -162,14 +205,10 @@ class CoreServiceClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.get(
-                    f"{self.base_url}/catalog/products",
-                    params=params,
-                    headers=self._build_headers(),
-                )
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._request(
+                "GET", "/catalog/products", headers=self._build_headers(), params=params,
+            )
+            payload = response.json()
         except Exception as exc:
             logger.warning("Core-service product search failed: %s", exc)
             return []
@@ -185,14 +224,15 @@ class CoreServiceClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.get(
-                    f"{self.base_url}/catalog/services",
-                    params=params,
-                    headers=self._build_headers(),
-                )
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._request(
+                "GET", "/catalog/services", headers=self._build_headers(), params=params,
+            )
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Core-service home puja service search failed: %s", exc)
+            if exc.response.status_code < 500:
+                raise CoreServiceError(f"Service search failed: {exc.response.text}") from exc
+            return []
         except Exception as exc:
             logger.warning("Core-service home puja service search failed: %s", exc)
             return []
@@ -208,14 +248,15 @@ class CoreServiceClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.get(
-                    f"{self.base_url}/catalog/pandits",
-                    params=params,
-                    headers=self._build_headers(),
-                )
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._request(
+                "GET", "/catalog/pandits", headers=self._build_headers(), params=params,
+            )
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Core-service public pandit search failed: %s", exc)
+            if exc.response.status_code < 500:
+                raise CoreServiceError(f"Pandit search failed: {exc.response.text}") from exc
+            return []
         except Exception as exc:
             logger.warning("Core-service public pandit search failed: %s", exc)
             return []
@@ -231,14 +272,15 @@ class CoreServiceClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.get(
-                    f"{self.base_url}/temples/services",
-                    params=params,
-                    headers=self._build_headers(),
-                )
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._request(
+                "GET", "/temples/services", headers=self._build_headers(), params=params,
+            )
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Core-service temple service search failed: %s", exc)
+            if exc.response.status_code < 500:
+                raise CoreServiceError(f"Temple service search failed: {exc.response.text}") from exc
+            return []
         except Exception as exc:
             logger.warning("Core-service temple service search failed: %s", exc)
             return []
@@ -268,14 +310,10 @@ class CoreServiceClient:
             params["specialty"] = specialty
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.get(
-                    f"{self.base_url}/providers/browse",
-                    params=params,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._request(
+                "GET", "/providers/browse", headers=headers, params=params,
+            )
+            payload = response.json()
         except Exception as exc:
             logger.warning("Core-service pandit search failed: %s", exc)
             return []
@@ -295,14 +333,15 @@ class CoreServiceClient:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    f"{self.base_url}/bookings/preview-price",
-                    json=payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await self._request(
+                "POST", "/bookings/preview-price", headers=headers, json=payload,
+            )
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Core-service booking price preview failed: %s", exc)
+            if exc.response.status_code < 500:
+                raise CoreServiceError(f"Price preview failed: {exc.response.text}") from exc
+            return None
         except Exception as exc:
             logger.warning("Core-service booking price preview failed: %s", exc)
             return None
@@ -319,14 +358,15 @@ class CoreServiceClient:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    f"{self.base_url}/bookings",
-                    json=payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await self._request(
+                "POST", "/bookings", headers=headers, json=payload,
+            )
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Core-service home puja booking failed: %s", exc)
+            if exc.response.status_code < 500:
+                raise CoreServiceError(f"Booking creation failed: {exc.response.text}") from exc
+            return None
         except Exception as exc:
             logger.warning("Core-service home puja booking failed: %s", exc)
             return None
@@ -343,14 +383,15 @@ class CoreServiceClient:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    f"{self.base_url}/temple/bookings",
-                    json=payload,
-                    headers=headers,
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await self._request(
+                "POST", "/temple/bookings", headers=headers, json=payload,
+            )
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Core-service temple booking failed: %s", exc)
+            if exc.response.status_code < 500:
+                raise CoreServiceError(f"Temple booking failed: {exc.response.text}") from exc
+            return None
         except Exception as exc:
             logger.warning("Core-service temple booking failed: %s", exc)
             return None
@@ -358,12 +399,24 @@ class CoreServiceClient:
     @staticmethod
     def _infer_specialty(query: str) -> str | None:
         lowered = query.lower()
-        if any(term in lowered for term in ("career", "job", "work", "promotion")):
+        if any(term in lowered for term in ("career", "job", "work", "promotion", "naukri")):
             return "career"
-        if any(term in lowered for term in ("marriage", "relationship", "love", "partner")):
+        if any(term in lowered for term in ("marriage", "relationship", "love", "partner", "shaadi", "rishta", "compatibility")):
             return "relationship"
-        if any(term in lowered for term in ("health", "stress", "anxiety", "mind")):
+        if any(term in lowered for term in ("health", "stress", "anxiety", "mind", "illness", "swasthya")):
             return "healing"
-        if any(term in lowered for term in ("money", "finance", "business")):
+        if any(term in lowered for term in ("money", "finance", "business", "wealth", "dhan", "investment")):
             return "finance"
+        if any(term in lowered for term in ("puja", "pooja", "ritual", "havan", "homam", "vedic")):
+            return "ritual"
+        if any(term in lowered for term in ("education", "study", "exam", "padhai", "university")):
+            return "education"
+        if any(term in lowered for term in ("family", "child", "pregnancy", "santan", "parivar")):
+            return "family"
+        if any(term in lowered for term in ("vaastu", "vastu", "griha", "house", "property", "real estate")):
+            return "vaastu"
+        if any(term in lowered for term in ("kundali", "kundli", "birth chart", "horoscope", "dasha", "transit", "gochar")):
+            return "kundali"
+        if any(term in lowered for term in ("remedy", "upay", "rudraksha", "mantra", "spiritual")):
+            return "remedies"
         return None

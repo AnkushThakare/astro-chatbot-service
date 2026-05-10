@@ -12,7 +12,7 @@ from src.api.matchmaking import router as matchmaking_router
 from src.core.config import settings
 from src.core.logging import get_logger, setup_logging
 from src.core.middleware import CorrelationMiddleware, ErrorHandlerMiddleware
-from src.db.session import configure_database, init_db
+from src.db.session import configure_database, init_db, shutdown_database
 
 setup_logging()
 logger = get_logger(__name__)
@@ -24,6 +24,8 @@ async def lifespan(_: FastAPI):
     init_db()
     logger.info("Database initialized successfully")
     yield
+    shutdown_database()
+    logger.info("Database connections closed")
 
 
 def create_app() -> FastAPI:

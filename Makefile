@@ -2,7 +2,7 @@ PY = python
 VENV ?= .venv
 ACTIVATE = . $(VENV)/bin/activate
 
-.PHONY: venv install format lint typecheck test test-docker check run
+.PHONY: venv install format lint typecheck test test-docker eval-planner-docker check run
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -27,6 +27,10 @@ test:
 test-docker:
 	docker build -f Dockerfile.test -t astro-chatbot-service-test .
 	docker run --rm astro-chatbot-service-test tests
+
+eval-planner-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm --entrypoint python astro-chatbot-service-test finetune/eval.py
 
 check:
 	$(ACTIVATE); $(MAKE) lint

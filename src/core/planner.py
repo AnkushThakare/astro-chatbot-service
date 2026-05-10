@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -33,6 +34,8 @@ class PlannerResult(BaseModel):
 
 
 class ConversationPlanner:
+    MAX_RETRIES = 3
+
     def __init__(self, groq_client: GroqClient, planner_model: str | None = None) -> None:
         self.groq_client = groq_client
         self.planner_model = planner_model or settings.GROQ_PLANNER_MODEL
@@ -126,17 +129,23 @@ class ConversationPlanner:
         if not self.groq_client.is_configured:
             return self.fallback_result("Planner model is unavailable because GROQ_API_KEY is not configured.")
 
-        try:
-            raw = await self._generate_raw_plan(
-                message=message,
-                has_birth_details=has_birth_details,
-                has_matchmaking_details=has_matchmaking_details,
-                is_authenticated=is_authenticated,
-            )
-            return PlannerResult.model_validate_json(raw)
-        except ValidationError as exc:
-            logger.warning("Planner schema validation failed: %s", exc)
-        except Exception as exc:
-            logger.warning("Planner execution failed: %s", exc)
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                raw = await self._generate_raw_plan(
+                    message=message,
+                    has_birth_details=has_birth_details,
+                    has_matchmaking_details=has_matchmaking_details,
+                    is_authenticated=is_authenticated,
+                )
+                return PlannerResult.model_validate_json(raw)
+            except ValidationError as exc:
+                logger.warning("Planner schema validation failed: %s", exc)
+                break
+            except Exception as exc:
+                logger.warning("Planner execution failed: %s", exc)
+                if "429" in str(exc) and attempt < self.MAX_RETRIES:
+                    await asyncio.sleep(0.75 * attempt)
+                    continue
+                break
 
         return self.fallback_result("Planner response was invalid, so the assistant fell back to respond_only.")

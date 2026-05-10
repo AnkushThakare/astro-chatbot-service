@@ -12,18 +12,19 @@ if ($LASTEXITCODE -ne 0) {
 $dockerArgs = @("run", "--rm")
 $filteredEnvFile = $null
 if (Test-Path $envFile) {
-    $filteredEnvFile = Join-Path $env:TEMP "astro-chatbot-service.test.env"
+    $filteredEnvFile = Join-Path $env:TEMP "astro-chatbot-service.eval.env"
     Get-Content $envFile | Where-Object {
         $_ -match '^\s*[A-Za-z_][A-Za-z0-9_]*='
     } | Set-Content $filteredEnvFile
     $dockerArgs += @("--env-file", $filteredEnvFile)
 }
+if ($env:GROQ_API_KEY) {
+    $dockerArgs += @("-e", "GROQ_API_KEY=$env:GROQ_API_KEY")
+}
+$dockerArgs += @("--entrypoint", "python", $imageName, "finetune/eval.py")
 
 if ($args.Count -gt 0) {
-    $dockerArgs += @($imageName) + $args
-}
-else {
-    $dockerArgs += @($imageName, "tests")
+    $dockerArgs += $args
 }
 
 docker @dockerArgs

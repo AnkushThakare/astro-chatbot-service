@@ -110,6 +110,7 @@ class ChatService:
             "tool": "recommend_product",
             "event_name": "suggestion_product",
             "summary": summary,
+            "policy_note": "Only mention products that appear in these catalog results.",
             "items": items,
             "source": "core-service",
         }

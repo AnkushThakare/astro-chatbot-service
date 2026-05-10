@@ -71,6 +71,32 @@ On Windows PowerShell you can use the committed helper:
 ./scripts/test_in_docker.ps1 tests/test_planner.py
 ```
 
+## Planner Evaluation
+
+Use the labeled planner dataset at [data/planner_eval_examples.jsonl](/C:/Users/ankus/astro-chatbot-service/data/planner_eval_examples.jsonl) to measure:
+
+- action accuracy
+- guarded tool precision / recall
+- unsafe tool false positives
+- clarification rate
+- argument extraction accuracy
+
+Run it in Docker:
+
+```bash
+docker build -f Dockerfile.test -t astro-chatbot-service-test .
+docker run --rm --entrypoint python astro-chatbot-service-test finetune/eval.py
+```
+
+On Windows PowerShell:
+
+```powershell
+./scripts/eval_planner_in_docker.ps1
+./scripts/eval_planner_in_docker.ps1 --dataset data/planner_eval_examples.jsonl --output-json planner_eval_summary.json
+```
+
+The Docker helper scripts automatically load `.env` when present. If `GROQ_API_KEY` is still unset, the planner falls back to `respond_only`, so the evaluation run is only validating the harness, not the live model.
+
 ## Astrology Engine Modes
 
 This service keeps astrology behind an adapter boundary so the repo stays separate:

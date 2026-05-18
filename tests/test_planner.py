@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from src.core.chat_service import ChatService
+from src.core.confidence_policy import get_threshold, is_confident
 from src.core.llm import GroqClient
 from src.core.planner import ConversationPlanner, PlannerResult
 
@@ -93,7 +96,7 @@ def test_tool_guardrail_exposes_low_confidence_reason() -> None:
 
     assert decision["allowed"] is False
     assert decision["reason"] == "low_confidence"
-    assert decision["threshold"] == ChatService.TOOL_CONFIDENCE_THRESHOLD
+    assert decision["threshold"] == get_threshold("book_pooja")
 
 
 def test_tool_guardrail_blocks_bypass_attempt_without_required_fields() -> None:
@@ -176,6 +179,61 @@ def test_tool_guardrail_includes_normalized_search_query_on_allow() -> None:
     assert decision["allowed"] is True
     assert decision["reason"] == "passed"
     assert decision["search_query"] == "marriage matching astrologer"
+
+
+@pytest.mark.parametrize(
+    ("action", "below_threshold", "at_threshold"),
+    [
+        ("respond_only", 0.49, 0.50),
+        ("ask_clarification", 0.39, 0.40),
+        ("show_kundali", 0.69, 0.70),
+        ("recommend_product", 0.81, 0.82),
+        ("matchmaking", 0.77, 0.78),
+        ("suggest_consultant", 0.79, 0.80),
+        ("book_pooja", 0.84, 0.85),
+    ],
+)
+def test_confidence_policy_respects_per_action_thresholds(
+    action: str,
+    below_threshold: float,
+    at_threshold: float,
+) -> None:
+    rejected = PlannerResult(
+        action=action,  # type: ignore[arg-type]
+        confidence=below_threshold,
+        arguments={},
+        missing_information=[],
+        should_call_tool=action not in {"respond_only", "ask_clarification"},
+        reasoning="threshold test",
+    )
+    accepted = rejected.model_copy(update={"confidence": at_threshold})
+
+    assert is_confident(rejected) is False
+    assert is_confident(accepted) is True
+
+
+def test_low_confidence_high_risk_tool_plan_falls_back_to_respond_only() -> None:
+    plan = PlannerResult(
+        action="book_pooja",
+        confidence=0.84,
+        arguments={"search_query": "satyanarayan puja"},
+        missing_information=[],
+        should_call_tool=True,
+        reasoning="Possible booking request.",
+    )
+
+    tool_guardrail = ChatService._tool_guardrail_decision(
+        plan,
+        birth_details=None,
+        matchmaking_details=None,
+    )
+    fallback_plan = ChatService._fallback_plan_for_threshold_rejection(plan, tool_guardrail)
+
+    assert tool_guardrail["allowed"] is False
+    assert tool_guardrail["reason"] == "low_confidence"
+    assert fallback_plan.action == "respond_only"
+    assert fallback_plan.should_call_tool is False
+    assert fallback_plan.arguments == {}
 
 
 def test_planner_normalizes_explicit_product_request_when_model_undercalls() -> None:

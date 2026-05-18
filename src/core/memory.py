@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
@@ -21,20 +19,6 @@ class MemoryService:
     def recent_messages(self, session_id: str, limit: int) -> list[dict[str, str]]:
         rows = self.repository.list_recent_turns(session_id, limit)
         return [{"role": row.role, "content": row.content} for row in rows]
-
-    def remember_birth_details(
-        self,
-        session_id: str,
-        payload: dict[str, str],
-        *,
-        user_id: int | None = None,
-    ) -> None:
-        self.repository.upsert_fact(
-            session_id=session_id,
-            fact_key="birth_details",
-            fact_value=json.dumps(payload),
-            user_id=user_id,
-        )
 
     def long_term_context(
         self,

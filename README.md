@@ -111,14 +111,15 @@ The local mode is intended for development when `astrology-service` exists nearb
 ## API Surface
 
 - `GET /health`
-- `GET /ready`
 - `GET /api/v1/health`
-- `POST /api/v1/chat`
-- `GET /api/v1/memory/{session_id}`
-- `POST /api/v1/retrieval/documents`
-- `POST /api/v1/retrieval/search`
-- `POST /api/v1/fine-tuning/dataset`
-- `POST /api/v1/fine-tuning/job-payload`
+- `POST /api/v1/chat/message`
+- `POST /api/v1/chat/summarize`
+- `POST /api/v1/kundali/compute`
+- `POST /api/v1/matchmaking/compute`
+- `POST /internal/invalidate-cache`
+- `POST /internal/daily-insight`
+
+The chat endpoint requires `client_message_id` as a UUID v4 so mobile retries can be replayed idempotently.
 
 ## Notes
 

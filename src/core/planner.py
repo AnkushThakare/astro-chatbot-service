@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from functools import lru_cache
 import re
 from typing import Any, Literal
@@ -96,6 +97,7 @@ MATCHMAKING_TOKENS = {
     "kundli",
     "match",
     "matching",
+    "matchmaking",
     "milan",
 }
 KUNDALI_TOKENS = {"birth", "chart", "horoscope", "kundali", "kundli"}
@@ -124,6 +126,7 @@ class PlannerResult(BaseModel):
 
 class ConversationPlanner:
     MAX_RETRIES = 3
+    RETRY_BACKOFF_BASE_SECONDS = 3 / 4
 
     def __init__(self, groq_client: GroqClient, planner_model: str | None = None) -> None:
         self.groq_client = groq_client
@@ -287,6 +290,8 @@ class ConversationPlanner:
     def _infer_explicit_action(cls, message: str) -> PlannerAction | None:
         tokens = set(cls._clean_tokens(message))
 
+        if "matchmaking" in tokens:
+            return "matchmaking"
         if tokens & MATCHMAKING_TOKENS and ("milan" in tokens or "match" in tokens or "matching" in tokens):
             return "matchmaking"
         if tokens & CONSULTANT_TOKENS and (
@@ -298,6 +303,11 @@ class ConversationPlanner:
         if tokens & PRODUCT_TOKENS and (
             tokens & REQUEST_VERBS or "price" in tokens or len(tokens) <= 5
         ):
+            # Don't trigger product action for general remedy questions
+            # that happen to mention a product token alongside broad advice words
+            general_remedy_words = {"remedy", "remedies", "help", "effects", "reduce", "problems"}
+            if tokens & general_remedy_words and not (tokens & {"buy", "price", "wear", "order", "show"}):
+                return None
             return "recommend_product"
         if tokens & KUNDALI_TOKENS and (
             tokens & {"analyse", "analyze", "read", "show", "stands", "tell"}
@@ -349,6 +359,11 @@ class ConversationPlanner:
             normalized.arguments = {}
             normalized.reasoning = "Matchmaking details are required before a matchmaking tool call can run."
             return normalized
+
+        if normalized.action == "show_kundali" and has_birth_details and explicit_action == "show_kundali":
+            normalized.should_call_tool = True
+        if normalized.action == "matchmaking" and has_matchmaking_details and explicit_action == "matchmaking":
+            normalized.should_call_tool = True
 
         if normalized.action in SEARCH_QUERY_ACTIONS:
             query = normalized.arguments.get("search_query")
@@ -442,7 +457,17 @@ class ConversationPlanner:
                     has_matchmaking_details=has_matchmaking_details,
                     is_authenticated=is_authenticated,
                 )
-                validated = PlannerResult.model_validate_json(raw)
+                # Strip markdown fences if LLM wraps JSON in ```json ... ```
+                cleaned = raw.strip()
+                if cleaned.startswith("```"):
+                    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+                    cleaned = re.sub(r"\s*```$", "", cleaned)
+                # Try parsing as JSON first, then as pydantic
+                try:
+                    parsed = json.loads(cleaned)
+                    validated = PlannerResult.model_validate(parsed)
+                except (json.JSONDecodeError, ValidationError):
+                    validated = PlannerResult.model_validate_json(cleaned)
                 return self._normalize_plan(
                     validated,
                     message=message,
@@ -455,8 +480,271 @@ class ConversationPlanner:
             except Exception as exc:
                 logger.warning("Planner execution failed: %s", exc)
                 if "429" in str(exc) and attempt < self.MAX_RETRIES:
-                    await asyncio.sleep(0.75 * attempt)
+                    await asyncio.sleep(self.RETRY_BACKOFF_BASE_SECONDS * attempt)
                     continue
                 break
 
         return self.fallback_result("Planner response was invalid, so the assistant fell back to respond_only.")
+
+
+# ---------------------------------------------------------------------------
+# Tool-call based planner (Groq function calling)
+# ---------------------------------------------------------------------------
+
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "show_kundali",
+            "description": "Show, read, or analyze the user's birth chart (kundali). Call this when the user asks to see their horoscope, birth chart, kundali, or planetary positions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "matchmaking",
+            "description": "Perform kundali matching or guna milan for marriage compatibility. Call this when the user asks about compatibility, guna matching, or kundali milan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recommend_product",
+            "description": "Recommend astrology products like rudraksha, mala, or bracelets. Call this when the user asks about products, wants to buy/wear rudraksha, asks for product recommendations, or mentions specific product names.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {
+                        "type": "string",
+                        "description": "Search query for finding products, e.g. 'rudraksha bracelet' or '5 mukhi rudraksha'.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["search_query", "reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suggest_consultant",
+            "description": "Suggest or connect the user with an astrologer or consultant. Call this when the user wants to talk to, consult, or find an astrologer or pandit.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {
+                        "type": "string",
+                        "description": "Search query for finding consultants, e.g. 'career astrologer' or 'relationship consultant'.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["search_query", "reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_pooja",
+            "description": "Book a puja, havan, homam, or religious ritual/service. Call this when the user wants to book or schedule a pooja or ritual.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {
+                        "type": "string",
+                        "description": "Search query for finding puja services, e.g. 'shani puja' or 'navgraha homam'.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["search_query", "reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_clarification",
+            "description": "Ask the user for missing information needed to fulfill their request. Call this when you cannot determine the user's intent or critical details are missing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "missing_information": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of missing fields, e.g. ['birth_details', 'search_query'].",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of what information is needed and why.",
+                    },
+                },
+                "required": ["missing_information", "reasoning"],
+            },
+        },
+    },
+]
+
+# Fixed confidence values for tool-call planner (all above policy thresholds)
+_TOOL_CALL_CONFIDENCE: dict[str, float] = {
+    "show_kundali": 0.92,
+    "matchmaking": 0.92,
+    "recommend_product": 0.90,
+    "suggest_consultant": 0.90,
+    "book_pooja": 0.90,
+    "ask_clarification": 0.88,
+    "respond_only": 0.85,
+}
+
+
+class ToolCallPlanner:
+    def __init__(self, groq_client: GroqClient) -> None:
+        self.groq_client = groq_client
+
+    @staticmethod
+    @lru_cache
+    def system_prompt() -> str:
+        prompt_path = settings.prompts_dir / "planner_tools.txt"
+        if prompt_path.exists():
+            return prompt_path.read_text(encoding="utf-8").strip()
+        return (
+            "You are a routing planner for a Vedic astrology assistant called Digveda. "
+            "Based on the user's message, decide the best action by calling the appropriate tool. "
+            "If the user is just chatting, asking general astrology questions, or greeting, "
+            "do NOT call any tool — simply reply with a short acknowledgment. "
+            "Only call a tool when there is a clear actionable intent."
+        )
+
+    def _build_messages(
+        self,
+        *,
+        message: str,
+        has_birth_details: bool,
+        has_matchmaking_details: bool,
+    ) -> list[dict[str, str]]:
+        context_lines = [
+            f"has_birth_details={str(has_birth_details).lower()}",
+            f"has_matchmaking_details={str(has_matchmaking_details).lower()}",
+        ]
+        return [
+            {"role": "system", "content": self.system_prompt()},
+            {
+                "role": "user",
+                "content": (
+                    f"Context: {', '.join(context_lines)}\n\n"
+                    f"User message: {message}"
+                ),
+            },
+        ]
+
+    async def plan(
+        self,
+        *,
+        message: str,
+        has_birth_details: bool,
+        has_matchmaking_details: bool,
+        is_authenticated: bool,
+    ) -> PlannerResult:
+        if not self.groq_client.is_configured:
+            return ConversationPlanner.fallback_result(
+                "Tool-call planner unavailable: GROQ_API_KEY not configured."
+            )
+
+        messages = self._build_messages(
+            message=message,
+            has_birth_details=has_birth_details,
+            has_matchmaking_details=has_matchmaking_details,
+        )
+
+        try:
+            response_message = await self.groq_client.generate_with_tools(
+                messages,
+                tools=TOOL_DEFINITIONS,
+                model=settings.GROQ_MODEL,
+                temperature=0.1,
+                tool_choice="auto",
+            )
+        except Exception as exc:
+            logger.warning("ToolCallPlanner failed: %s", exc)
+            return ConversationPlanner.fallback_result(
+                f"Tool-call planner error: {exc}"
+            )
+
+        tool_calls = response_message.get("tool_calls")
+        if not tool_calls:
+            return PlannerResult(
+                action="respond_only",
+                confidence=_TOOL_CALL_CONFIDENCE["respond_only"],
+                arguments={},
+                missing_information=[],
+                should_call_tool=False,
+                reasoning=response_message.get("content", "No tool needed") or "General conversation",
+            )
+
+        call = tool_calls[0]
+        fn_name = call.get("function", {}).get("name", "respond_only")
+        try:
+            fn_args = json.loads(call.get("function", {}).get("arguments", "{}"))
+        except json.JSONDecodeError:
+            fn_args = {}
+
+        reasoning = fn_args.pop("reasoning", fn_name)
+
+        if fn_name not in _TOOL_CALL_CONFIDENCE:
+            return PlannerResult(
+                action="respond_only",
+                confidence=_TOOL_CALL_CONFIDENCE["respond_only"],
+                arguments={},
+                should_call_tool=False,
+                reasoning=f"Unknown tool '{fn_name}', falling back to respond_only.",
+            )
+
+        action: PlannerAction = fn_name  # type: ignore[assignment]
+        confidence = _TOOL_CALL_CONFIDENCE[action]
+        should_call_tool = action in TOOL_ACTIONS
+        missing_info = fn_args.get("missing_information", [])
+        arguments = {k: v for k, v in fn_args.items() if k != "missing_information"}
+
+        result = PlannerResult(
+            action=action,
+            confidence=confidence,
+            arguments=arguments,
+            missing_information=missing_info if isinstance(missing_info, list) else [],
+            should_call_tool=should_call_tool,
+            reasoning=reasoning,
+        )
+
+        return ConversationPlanner._normalize_plan(
+            result,
+            message=message,
+            has_birth_details=has_birth_details,
+            has_matchmaking_details=has_matchmaking_details,
+        )

@@ -2,8 +2,22 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from src.core.config import settings
+
+try:
+    from pgvector.sqlalchemy import Vector as PgVector
+except ImportError:  # pragma: no cover - exercised through fallback path
+    PgVector = None
+
+
+EMBEDDING_VECTOR_TYPE = (
+    PgVector(settings.RAG_EMBEDDING_DIMENSIONS).with_variant(Text(), "sqlite")
+    if PgVector is not None
+    else Text()
+)
 
 
 class Base(DeclarativeBase):
@@ -32,7 +46,6 @@ class User(Base, TimestampMixin):
     preferred_language: Mapped[str] = mapped_column(String(16), default="en")
 
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")
-    birth_charts: Mapped[list["BirthChart"]] = relationship(back_populates="user")
     memories: Mapped[list["Memory"]] = relationship(back_populates="user")
 
 
@@ -49,7 +62,6 @@ class Conversation(Base, TimestampMixin):
     user: Mapped[User | None] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation")
     memories: Mapped[list["Memory"]] = relationship(back_populates="conversation")
-    birth_charts: Mapped[list["BirthChart"]] = relationship(back_populates="conversation")
 
 
 class Message(Base):
@@ -62,32 +74,19 @@ class Message(Base):
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     intent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_versions: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    route_taken: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tool_called: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    variant_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    total_tokens_input: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    partial: Mapped[bool] = mapped_column(Boolean, default=False)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
-
-
-class BirthChart(Base, TimestampMixin):
-    __tablename__ = "birth_charts"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    conversation_id: Mapped[int | None] = mapped_column(
-        ForeignKey("conversations.id"),
-        nullable=True,
-        index=True,
-    )
-    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    latitude: Mapped[float] = mapped_column(Float)
-    longitude: Mapped[float] = mapped_column(Float)
-    timezone_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    birth_datetime: Mapped[datetime] = mapped_column(DateTime)
-    chart_json: Mapped[str] = mapped_column(Text)
-
-    user: Mapped[User | None] = relationship(back_populates="birth_charts")
-    conversation: Mapped[Conversation | None] = relationship(back_populates="birth_charts")
-
 
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
@@ -151,3 +150,4 @@ class Embedding(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text)
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     vector_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vector_pg: Mapped[object | None] = mapped_column(EMBEDDING_VECTOR_TYPE, nullable=True)

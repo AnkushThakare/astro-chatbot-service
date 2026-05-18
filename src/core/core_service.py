@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+import time
 from typing import Any
 
 import httpx
@@ -28,9 +29,65 @@ class CoreServiceError(Exception):
 
 
 class CoreServiceClient:
+    CACHE_TTL_SECONDS = 120
+    _query_cache: dict[tuple[str, str, int], tuple[float, list[dict[str, Any]]]] = {}
+    _birth_details_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+    _birth_profile_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+    _shared_client: httpx.AsyncClient | None = None
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.base_url = settings.CORE_SERVICE_BASE_URL.rstrip("/")
+
+    @classmethod
+    def _get_client(cls, timeout: int) -> httpx.AsyncClient:
+        if cls._shared_client is None or cls._shared_client.is_closed:
+            cls._shared_client = httpx.AsyncClient(
+                timeout=timeout,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        return cls._shared_client
+
+    @classmethod
+    async def close(cls) -> None:
+        if cls._shared_client is not None and not cls._shared_client.is_closed:
+            await cls._shared_client.aclose()
+            cls._shared_client = None
+
+    @classmethod
+    def _cache_get(cls, namespace: str, query: str, limit: int) -> list[dict[str, Any]] | None:
+        cache_key = (namespace, query.strip().lower(), limit)
+        cached = cls._query_cache.get(cache_key)
+        if cached is None:
+            return None
+        if time.time() - cached[0] > cls.CACHE_TTL_SECONDS:
+            cls._query_cache.pop(cache_key, None)
+            return None
+        return cached[1]
+
+    @classmethod
+    def _cache_set(cls, namespace: str, query: str, limit: int, value: list[dict[str, Any]]) -> None:
+        cache_key = (namespace, query.strip().lower(), limit)
+        cls._query_cache[cache_key] = (time.time(), value)
+
+    @classmethod
+    def _birth_cache_get(cls, user_id: str, ttl_seconds: int) -> dict[str, Any] | None | type(Ellipsis):
+        cached = cls._birth_details_cache.get(user_id)
+        if cached is None:
+            return Ellipsis
+        if time.time() - cached[0] > ttl_seconds:
+            cls._birth_details_cache.pop(user_id, None)
+            return Ellipsis
+        return cached[1]
+
+    @classmethod
+    def _birth_cache_set(cls, user_id: str, payload: dict[str, Any] | None) -> None:
+        cls._birth_details_cache[user_id] = (time.time(), payload)
+
+    @classmethod
+    def invalidate_birth_details_cache(cls, user_id: str) -> None:
+        cls._birth_details_cache.pop(user_id, None)
+        cls._birth_profile_cache.pop(user_id, None)
 
     async def _request(
         self,
@@ -43,18 +100,18 @@ class CoreServiceClient:
     ) -> httpx.Response:
         """Send an HTTP request with automatic retry on transient failures."""
         last_exc: Exception | None = None
+        client = self._get_client(self.settings.CORE_SERVICE_TIMEOUT_SECONDS)
         for attempt in range(1 + MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=self.settings.CORE_SERVICE_TIMEOUT_SECONDS) as client:
-                    response = await client.request(
-                        method,
-                        f"{self.base_url}{path}",
-                        headers=headers,
-                        params=params,
-                        json=json,
-                    )
-                    response.raise_for_status()
-                    return response
+                response = await client.request(
+                    method,
+                    f"{self.base_url}{path}",
+                    headers=headers,
+                    params=params,
+                    json=json,
+                )
+                response.raise_for_status()
+                return response
             except Exception as exc:
                 last_exc = exc
                 if attempt < MAX_RETRIES and _is_retryable(exc):
@@ -119,6 +176,229 @@ class CoreServiceClient:
             "timezone_str": timezone_name,
         }
         return birth_details, timezone_name
+
+    @staticmethod
+    def _deserialize_birth_details(payload: dict[str, Any]) -> dict[str, Any] | None:
+        source = payload.get("birth_details") if isinstance(payload.get("birth_details"), dict) else payload
+        if not isinstance(source, dict):
+            return None
+
+        birth_datetime = source.get("birth_datetime")
+        if isinstance(birth_datetime, str) and birth_datetime.strip():
+            resolved_birth_datetime = birth_datetime
+        else:
+            date_of_birth = source.get("date_of_birth")
+            time_of_birth = source.get("time_of_birth")
+            if not isinstance(date_of_birth, str) or not isinstance(time_of_birth, str):
+                return None
+            resolved_birth_datetime = f"{date_of_birth}T{time_of_birth}"
+
+        try:
+            latitude = float(source["latitude"])
+            longitude = float(source["longitude"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+        normalized: dict[str, Any] = {
+            "name": source.get("name"),
+            "latitude": latitude,
+            "longitude": longitude,
+            "birth_datetime": resolved_birth_datetime,
+        }
+        timezone_name = (
+            source.get("timezone_str")
+            or source.get("timezone_name")
+            or source.get("timezone")
+        )
+        if isinstance(timezone_name, str) and timezone_name.strip():
+            normalized["timezone_str"] = timezone_name.strip()
+        return normalized
+
+    @staticmethod
+    def _serialize_partial_birth_profile(payload: dict[str, Any]) -> dict[str, Any]:
+        updates: dict[str, Any] = {}
+        date_parts = payload.get("date_parts")
+        if isinstance(date_parts, tuple) and len(date_parts) == 3:
+            day, month, year = date_parts
+            updates["birth_date"] = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+        time_parts = payload.get("time_parts")
+        if isinstance(time_parts, tuple) and len(time_parts) == 2:
+            hour, minute = time_parts
+            updates["birth_time"] = f"{int(hour):02d}:{int(minute):02d}:00"
+
+        place = payload.get("place")
+        if isinstance(place, str) and place.strip():
+            updates["birth_place"] = place.strip()
+        return updates
+
+    @staticmethod
+    def _deserialize_partial_birth_profile(payload: dict[str, Any]) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+
+        partial: dict[str, Any] = {
+            "date_parts": None,
+            "time_parts": None,
+            "place": None,
+        }
+
+        birth_date = payload.get("birth_date")
+        if isinstance(birth_date, str) and birth_date.strip():
+            try:
+                parsed_date = datetime.fromisoformat(f"{birth_date.strip()}T00:00:00")
+                partial["date_parts"] = (
+                    parsed_date.day,
+                    parsed_date.month,
+                    parsed_date.year,
+                )
+            except ValueError:
+                pass
+
+        birth_time = payload.get("birth_time")
+        if isinstance(birth_time, str) and birth_time.strip():
+            raw_time = birth_time.strip()
+            for fmt in ("%H:%M:%S", "%H:%M"):
+                try:
+                    parsed_time = datetime.strptime(raw_time, fmt)
+                    partial["time_parts"] = (parsed_time.hour, parsed_time.minute)
+                    break
+                except ValueError:
+                    continue
+
+        birth_place = payload.get("birth_place")
+        if isinstance(birth_place, str) and birth_place.strip():
+            partial["place"] = birth_place.strip()
+
+        if all(partial[key] is None for key in ("date_parts", "time_parts", "place")):
+            return None
+        return partial
+
+    async def get_user_birth_details(
+        self,
+        user_id: str,
+        current_user: AuthenticatedUser | None,
+    ) -> dict[str, Any] | None:
+        cached = self._birth_cache_get(user_id, self.settings.BIRTH_DETAILS_CACHE_TTL_SECONDS)
+        if cached is not Ellipsis:
+            return cached
+
+        try:
+            headers = self._build_headers(current_user, auth_required=True)
+        except ValueError:
+            logger.info("Skipping core-service birth detail fetch because no bearer token is available")
+            return None
+
+        try:
+            response = await self._request(
+                "GET",
+                f"/users/{user_id}/birth-details",
+                headers=headers,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                self._birth_cache_set(user_id, None)
+                return None
+            logger.warning("Core-service birth detail fetch failed: %s", exc)
+            return None
+        except Exception as exc:
+            logger.warning("Core-service birth detail fetch failed: %s", exc)
+            return None
+
+        normalized = self._deserialize_birth_details(response.json())
+        self._birth_cache_set(user_id, normalized)
+        return normalized
+
+    async def save_user_birth_details(
+        self,
+        user_id: str,
+        payload: dict[str, Any],
+        current_user: AuthenticatedUser | None,
+    ) -> dict[str, Any] | None:
+        try:
+            headers = self._build_headers(current_user, auth_required=True)
+            birth_details, _ = self._serialize_birth_details(payload)
+        except ValueError as exc:
+            logger.warning("Skipping core-service birth detail save: %s", exc)
+            return None
+
+        try:
+            response = await self._request(
+                "POST",
+                f"/users/{user_id}/birth-details",
+                headers=headers,
+                json={"birth_details": birth_details},
+            )
+        except Exception as exc:
+            logger.warning("Core-service birth detail save failed: %s", exc)
+            return None
+
+        self.invalidate_birth_details_cache(user_id)
+        normalized = self._deserialize_birth_details(response.json())
+        self._birth_cache_set(user_id, normalized)
+        return normalized
+
+    async def get_user_birth_profile(
+        self,
+        user_id: str,
+        current_user: AuthenticatedUser | None,
+    ) -> dict[str, Any] | None:
+        cached = self._birth_profile_cache.get(user_id)
+        if cached is not None:
+            if time.time() - cached[0] <= self.settings.BIRTH_DETAILS_CACHE_TTL_SECONDS:
+                return cached[1]
+            self._birth_profile_cache.pop(user_id, None)
+
+        try:
+            headers = self._build_headers(current_user, auth_required=True)
+        except ValueError:
+            logger.info("Skipping core-service profile birth fetch because no bearer token is available")
+            return None
+
+        try:
+            response = await self._request(
+                "GET",
+                "/auth/me",
+                headers=headers,
+            )
+        except Exception as exc:
+            logger.warning("Core-service profile birth fetch failed: %s", exc)
+            return None
+
+        normalized = self._deserialize_partial_birth_profile(response.json())
+        self._birth_profile_cache[user_id] = (time.time(), normalized)
+        return normalized
+
+    async def save_user_birth_profile(
+        self,
+        user_id: str,
+        payload: dict[str, Any],
+        current_user: AuthenticatedUser | None,
+    ) -> dict[str, Any] | None:
+        updates = self._serialize_partial_birth_profile(payload)
+        if not updates:
+            return None
+
+        try:
+            headers = self._build_headers(current_user, auth_required=True)
+        except ValueError:
+            logger.info("Skipping core-service profile birth save because no bearer token is available")
+            return None
+
+        try:
+            response = await self._request(
+                "PUT",
+                "/auth/me",
+                headers=headers,
+                json=updates,
+            )
+        except Exception as exc:
+            logger.warning("Core-service profile birth save failed: %s", exc)
+            return None
+
+        normalized = self._deserialize_partial_birth_profile(response.json())
+        self._birth_profile_cache[user_id] = (time.time(), normalized)
+        return normalized
 
     async def generate_kundli(
         self,
@@ -197,6 +477,9 @@ class CoreServiceClient:
             return None
 
     async def search_products(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        cached = self._cache_get("products", query, limit)
+        if cached is not None:
+            return cached
         params = {
             "search": query,
             "limit": limit,
@@ -214,9 +497,14 @@ class CoreServiceClient:
             return []
 
         items = payload.get("items")
-        return items if isinstance(items, list) else []
+        result = items if isinstance(items, list) else []
+        self._cache_set("products", query, limit, result)
+        return result
 
     async def list_home_puja_services(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        cached = self._cache_get("home_puja_services", query, limit)
+        if cached is not None:
+            return cached
         params = {
             "search": query,
             "limit": limit,
@@ -238,9 +526,14 @@ class CoreServiceClient:
             return []
 
         items = payload.get("items")
-        return items if isinstance(items, list) else []
+        result = items if isinstance(items, list) else []
+        self._cache_set("home_puja_services", query, limit, result)
+        return result
 
     async def list_public_pandits(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        cached = self._cache_get("public_pandits", query, limit)
+        if cached is not None:
+            return cached
         params = {
             "keywords": query,
             "limit": limit,
@@ -262,9 +555,14 @@ class CoreServiceClient:
             return []
 
         items = payload.get("items")
-        return items if isinstance(items, list) else []
+        result = items if isinstance(items, list) else []
+        self._cache_set("public_pandits", query, limit, result)
+        return result
 
     async def list_temple_services(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        cached = self._cache_get("temple_services", query, limit)
+        if cached is not None:
+            return cached
         params = {
             "search": query,
             "page": 1,
@@ -286,7 +584,9 @@ class CoreServiceClient:
             return []
 
         items = payload.get("items")
-        return items if isinstance(items, list) else []
+        result = items if isinstance(items, list) else []
+        self._cache_set("temple_services", query, limit, result)
+        return result
 
     async def search_pandits(
         self,
@@ -294,6 +594,9 @@ class CoreServiceClient:
         current_user: AuthenticatedUser | None,
         limit: int = 3,
     ) -> list[dict[str, Any]]:
+        cached = self._cache_get("consultant_pandits", query, limit)
+        if cached is not None:
+            return cached
         try:
             headers = self._build_headers(current_user, auth_required=True)
         except ValueError:
@@ -319,7 +622,9 @@ class CoreServiceClient:
             return []
 
         items = payload.get("items")
-        return items if isinstance(items, list) else []
+        result = items if isinstance(items, list) else []
+        self._cache_set("consultant_pandits", query, limit, result)
+        return result
 
     async def preview_home_puja_price(
         self,

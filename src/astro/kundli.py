@@ -9,6 +9,7 @@ import httpx
 
 from src.astro.dasha import calculate_vimshottari_dasha
 from src.astro.ephemeris import julian_day, swiss_ephemeris_status
+from src.astro.yogas import detect_yogas
 from src.core.config import settings
 
 ZODIAC_SIGNS = [
@@ -25,6 +26,47 @@ ZODIAC_SIGNS = [
     "Aquarius",
     "Pisces",
 ]
+
+
+def _extract_moon_longitude(chart: dict[str, Any]) -> float | None:
+    """Extract Moon's sidereal longitude from core-service chart format."""
+    d1 = (chart.get("charts") or {}).get("D1") or {}
+    planets = d1.get("planets") or []
+    for planet in planets:
+        if not isinstance(planet, dict):
+            continue
+        name = (planet.get("name") or planet.get("id") or "").lower()
+        if name == "moon":
+            gd = planet.get("global_degree")
+            if isinstance(gd, (int, float)):
+                return float(gd)
+            lon = planet.get("longitude")
+            if isinstance(lon, (int, float)):
+                return float(lon)
+    return None
+
+
+def _extract_planet_data(chart: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract enriched planet data from core-service chart format."""
+    d1 = (chart.get("charts") or {}).get("D1") or {}
+    planets = d1.get("planets") or []
+    result: list[dict[str, Any]] = []
+    for planet in planets:
+        if not isinstance(planet, dict):
+            continue
+        result.append({
+            "name": planet.get("name") or planet.get("id"),
+            "house": planet.get("house_num"),
+            "sign_id": planet.get("sign_id"),
+            "longitude": planet.get("global_degree") or planet.get("longitude"),
+            "local_degree": planet.get("local_degree"),
+            "nakshatra": planet.get("nakshatra_name"),
+            "nakshatra_id": planet.get("nakshatra_id"),
+            "is_retrograde": planet.get("is_retrograde", False),
+            "is_combust": planet.get("is_combust", False),
+            "sign_lord": planet.get("sign_lord"),
+        })
+    return result
 
 
 def _normalize_birth_datetime(value: datetime | str | None) -> datetime:
@@ -156,8 +198,22 @@ async def compute_full_chart(payload: dict[str, Any]) -> dict[str, Any]:
         houses = {house: (ascendant_index + house - 1) % 12 for house in range(1, 13)}
         chart["house_sign_indices"] = houses
         chart["house_sign_names"] = {house: ZODIAC_SIGNS[index] for house, index in houses.items()}
-    if "dasha" not in chart:
-        birth_datetime = _normalize_birth_datetime(payload.get("birth_datetime"))
-        moon_index = int(chart.get("planets_sign_indices", {}).get("Moon", 0))
-        chart["dasha"] = calculate_vimshottari_dasha(birth_datetime, moon_index)
+
+    birth_datetime = _normalize_birth_datetime(payload.get("birth_datetime"))
+    moon_index = int(chart.get("planets_sign_indices", {}).get("Moon", 0))
+    moon_lon = _extract_moon_longitude(chart)
+
+    # Always recompute dasha with real moon longitude when available
+    chart["dasha"] = calculate_vimshottari_dasha(
+        birth_datetime, moon_index, moon_longitude=moon_lon,
+    )
+
+    # Enrich with extracted planet data from core-service format
+    enriched_planets = _extract_planet_data(chart)
+    if enriched_planets:
+        chart["enriched_planets"] = enriched_planets
+
+    # Detect yogas
+    chart["yogas"] = detect_yogas(chart)
+
     return chart

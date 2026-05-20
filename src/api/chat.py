@@ -14,7 +14,7 @@ from src.auth.jwt import AuthenticatedUser, get_optional_current_user, seconds_u
 from src.core.chat_service import ChatService
 from src.core.config import settings
 from src.core.idempotency import chat_idempotency_store
-from src.core.llm import GroqClient
+from src.core.llm import GroqClient, create_llm_client
 from src.core.logging import get_logger
 from src.core.memory import MemoryService
 from src.core.rate_limit import check_rate_limit
@@ -170,7 +170,7 @@ async def summarize_session(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Generate summary and extract facts for a session."""
-    groq = GroqClient(settings)
+    groq = create_llm_client(settings, role="response")
     if not groq.is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

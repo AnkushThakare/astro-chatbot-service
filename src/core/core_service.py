@@ -701,6 +701,34 @@ class CoreServiceClient:
             logger.warning("Core-service temple booking failed: %s", exc)
             return None
 
+    async def list_user_bookings(
+        self,
+        current_user: AuthenticatedUser | None,
+        *,
+        status_filter: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Fetch the authenticated user's booking history from core-service."""
+        try:
+            headers = self._build_headers(current_user, auth_required=True)
+        except ValueError:
+            logger.info("Skipping booking list because no bearer token is available")
+            return []
+
+        params: dict[str, Any] = {"limit": limit}
+        if status_filter:
+            params["status"] = status_filter
+
+        try:
+            response = await self._request(
+                "GET", "/bookings", headers=headers, params=params,
+            )
+            data = response.json()
+            return data if isinstance(data, list) else data.get("items", data.get("bookings", []))
+        except Exception as exc:
+            logger.warning("Core-service list bookings failed: %s", exc)
+            return []
+
     @staticmethod
     def _infer_specialty(query: str) -> str | None:
         lowered = query.lower()

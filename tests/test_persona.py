@@ -44,3 +44,16 @@ def test_build_persona_prompt_includes_pattern_section_when_present() -> None:
 
     assert "Recurring personal pattern read" in prompt
     assert "Recurring theme: career" in prompt
+
+
+def test_build_persona_prompt_includes_behavior_section_when_present() -> None:
+    prompt = build_persona_prompt(
+        long_term_context=None,
+        retrieval_context="No retrieved astrology notes were matched.",
+        retrieval_policy_context=None,
+        tool_context="No tool output used.",
+        behavior_summary="Energy flow snapshot:\n- Emotional state: elevated_stress\n- Behavioral state: overthinking_loop",
+    )
+
+    assert "Behavioral energy flow read" in prompt
+    assert "overthinking_loop" in prompt

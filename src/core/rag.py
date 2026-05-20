@@ -83,8 +83,18 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (mag_a * mag_b)
 
 
+_documents_cache: list[RetrievalDocument] | None = None
+
+
+def clear_documents_cache() -> None:
+    """Reset the module-level documents cache (used by tests)."""
+    global _documents_cache
+    _documents_cache = None
+
+
 class RAGService:
     _query_cache: dict[tuple[str, int, str | None, str], tuple[float, dict[str, Any]]] = {}
+    _QUERY_CACHE_MAX_SIZE = 200
     EMBEDDING_SOURCE_TYPE = "astrology_text"
     KNOWLEDGE_DOMAINS = {"astrology_reference", "general_guidance"}
     POLICY_DOMAINS = {"product_policy", "booking_guidance", "remedy_guidance"}
@@ -400,12 +410,16 @@ class RAGService:
             chunks.append("\n\n".join(current_parts))
         return chunks
 
-    @staticmethod
-    @lru_cache
-    def _documents() -> list[RetrievalDocument]:
+    @classmethod
+    def _documents(cls) -> list[RetrievalDocument]:
+        global _documents_cache
+        if _documents_cache is not None:
+            return _documents_cache
+
         documents: list[RetrievalDocument] = []
         data_dir = settings.rag_data_dir
         if not data_dir.exists():
+            _documents_cache = documents
             return documents
         embedding_provider = get_embedding_provider()
 
@@ -418,13 +432,13 @@ class RAGService:
                 continue
 
             title = path.stem.replace("_", " ")
-            chunks = RAGService._chunk_text(
+            chunks = cls._chunk_text(
                 content,
                 chunk_size_words=settings.RAG_CHUNK_SIZE_WORDS,
                 overlap_words=settings.RAG_CHUNK_OVERLAP_WORDS,
             )
             for index, chunk in enumerate(chunks):
-                chunk_metadata = RAGService._infer_metadata(path.name, title, chunk)
+                chunk_metadata = cls._infer_metadata(path.name, title, chunk)
                 documents.append(
                     RetrievalDocument(
                         title=title,
@@ -435,12 +449,13 @@ class RAGService:
                             "chunk_index": index,
                             "chunk_count": len(chunks),
                             "source_title": title,
-                            "source_citation": RAGService._source_citation(title, path.name),
+                            "source_citation": cls._source_citation(title, path.name),
                             "embedding_model": embedding_provider.model_name,
                         },
                         vector=embedding_provider.embed_text(chunk),
                     )
                 )
+        _documents_cache = documents
         return documents
 
     @classmethod
@@ -1374,6 +1389,11 @@ class RAGService:
             ]
         }
         self._query_cache[cache_key] = (now, payload)
+        # Evict oldest entries when cache grows too large
+        if len(self._query_cache) > self._QUERY_CACHE_MAX_SIZE:
+            sorted_keys = sorted(self._query_cache, key=lambda k: self._query_cache[k][0])
+            for stale_key in sorted_keys[: len(sorted_keys) // 4]:
+                self._query_cache.pop(stale_key, None)
         return payload
 
     def retrieve_context_bundle(

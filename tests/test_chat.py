@@ -4,7 +4,7 @@ import logging
 from src.core.chat_service import ChatService
 from src.core.guardrails import final_response_guardrail, pre_scope_guardrail, tool_specific_guardrail
 from src.core.planner import PlannerResult
-from src.core.response_composer import build_cards
+from src.core.response_composer import build_cards, normalize_tool_outputs
 from src.core.router import ChatRouteDecision, classify_route
 from src.core.streaming import chunk_text
 
@@ -241,6 +241,143 @@ def test_should_keep_kundali_clarification_from_session_context_for_acknowledgem
     ) is True
 
 
+def test_recommendation_readiness_stays_low_for_simple_guidance_message() -> None:
+    readiness = ChatService._recommendation_readiness(
+        semantic_understanding={
+            "problem": "career",
+            "severity": "low",
+            "remedy_interest": False,
+        },
+        conversation_context={"main_concern": None},
+        behavior_signals={
+            "engagement": 0,
+            "remedy_interest": 0,
+            "explicit_request": 0,
+            "avoidance": 0,
+        },
+        recent_messages=[],
+    )
+
+    assert readiness["score"] < 31
+    assert readiness["recommendation_ready"] is False
+
+
+def test_orchestrate_plan_blocks_product_when_readiness_is_low() -> None:
+    plan = PlannerResult(
+        action="recommend_product",
+        confidence=0.92,
+        arguments={"search_query": "career remedy"},
+        missing_information=[],
+        should_call_tool=True,
+        reasoning="planner suggested product support",
+    )
+
+    updated, orchestration = ChatService._orchestrate_plan(
+        plan=plan,
+        message="My efforts are slow",
+        session_state={},
+        semantic_understanding={"problem": "career"},
+        behavior_signals={"avoidance": 0},
+        recommendation_readiness={"score": 20},
+        birth_details=None,
+        matchmaking_details=None,
+    )
+
+    assert updated.action == "respond_only"
+    assert updated.should_call_tool is False
+    assert orchestration["reason"] == "readiness_too_low"
+
+
+def test_orchestrate_plan_blocks_duplicate_product_without_explicit_request() -> None:
+    plan = PlannerResult(
+        action="recommend_product",
+        confidence=0.92,
+        arguments={"search_query": "career remedy"},
+        missing_information=[],
+        should_call_tool=True,
+        reasoning="planner suggested product support",
+    )
+
+    updated, orchestration = ChatService._orchestrate_plan(
+        plan=plan,
+        message="I still feel stuck",
+        session_state={
+            "main_concern": "career",
+            "previous_tools": ["recommend_product"],
+            "products_shown": ["prod-1"],
+        },
+        semantic_understanding={"problem": "career"},
+        behavior_signals={"avoidance": 0},
+        recommendation_readiness={"score": 45},
+        birth_details=None,
+        matchmaking_details=None,
+    )
+
+    assert updated.action == "respond_only"
+    assert updated.should_call_tool is False
+    assert orchestration["reason"] in {"recent_tool_repeat", "products_already_shown"}
+
+
+def test_build_compact_session_state_tracks_recommendation_history() -> None:
+    state = ChatService._build_compact_session_state(
+        context={
+            "plan": PlannerResult(
+                action="recommend_product",
+                confidence=0.92,
+                arguments={"search_query": "career remedy"},
+                missing_information=[],
+                should_call_tool=True,
+                reasoning="planner suggested product support",
+            ),
+            "effective_birth_details": None,
+            "partial_birth_details": None,
+            "matchmaking_details": None,
+            "tool_outputs": [
+                {
+                    "tool": "recommend_product",
+                    "summary": "Products available.",
+                    "items": [{"id": "prod-1"}],
+                }
+            ],
+            "message": "Show me products",
+            "session_state": {
+                "main_concern": "career",
+                "previous_tools": ["suggest_consultant"],
+                "products_shown": [],
+                "services_shown": [],
+                "consultation_history": [],
+            },
+            "semantic_understanding": {"problem": "career"},
+        },
+        reply="Here are a few options.",
+    )
+
+    assert state["main_concern"] == "career"
+    assert "suggest_consultant" in state["previous_tools"]
+    assert "recommend_product" in state["previous_tools"]
+    assert "prod-1" in state["products_shown"]
+
+
+def test_normalize_tool_outputs_returns_reasoned_payloads() -> None:
+    normalized = normalize_tool_outputs(
+        [
+            {
+                "tool": "recommend_product",
+                "search_query": "career remedy",
+                "items": [{"id": "prod-1", "name": "5 Mukhi Rudraksha"}],
+            }
+        ]
+    )
+
+    assert normalized == [
+        {
+            "type": "product",
+            "reason": "career remedy",
+            "items": [{"id": "prod-1", "name": "5 Mukhi Rudraksha"}],
+        }
+    ]
+
+
 def test_build_birth_details_capture_reply_asks_only_for_missing_place() -> None:
     reply = ChatService._build_birth_details_capture_reply(
         "DOB is 20/06/2001 and time is 10:30 pm",
@@ -274,7 +411,7 @@ def test_response_style_context_for_show_kundali_answers_actual_question() -> No
     assert "Sound like a calm, traditional Vedic astrologer speaking directly to one person." in style
     assert "Answer the user's actual concern from the chart perspective" in style
     assert "Do not repeat every structured item in prose." in style
-    assert "Lead with the astrological insight first" in style
+    assert "astrological insight about the user's concern" in style
 
 
 def test_response_style_context_allows_soft_product_after_guidance() -> None:
@@ -292,7 +429,7 @@ def test_response_style_context_allows_soft_product_after_guidance() -> None:
         tool_outputs=[{"tool": "recommend_product", "soft_recommendation": True}],
     )
 
-    assert "Present it as optional support" in style
+    assert "supportive product option is available" in style
     assert "Do not introduce rudraksha, bracelets, or catalog products on your own." not in style
 
 
@@ -373,7 +510,7 @@ def test_build_fast_astrology_reply_asks_for_birth_details_for_personal_career_q
         matchmaking_details=None,
     )
     assert "10th house" in reply
-    assert "birth details" in reply.lower()
+    assert "birth" in reply.lower()
 
 
 def test_stream_reply_events_runs_complete_context_for_fast_chat_guidance() -> None:
@@ -423,7 +560,9 @@ def test_stream_reply_events_runs_complete_context_for_fast_chat_guidance() -> N
             "tool_guardrail": {"allowed": False, "reason": "planner_declined_tool"},
             "tool_execution_allowed": False,
             "birth_details_followup": False,
+            "birth_details_capture_pending": False,
             "effective_birth_details": None,
+            "matchmaking_details": None,
             "recent_messages": [],
             "internal_user_id": None,
             "route_decision": ChatRouteDecision(
@@ -660,7 +799,7 @@ def test_policy_match_can_enable_soft_product_recommendation() -> None:
 
 def test_infer_soft_product_query_maps_career_issue_to_catalog_friendly_query() -> None:
     assert ChatService._infer_soft_product_query(
-        message="I have career delay and too many obstacles right now.",
+        message="I have career delay and too many obstacles, any remedy?",
         kundali_summary=None,
     ) == "rudraksha career"
 
@@ -676,7 +815,7 @@ def test_should_offer_soft_product_for_general_guidance_when_policy_allows() -> 
     )
 
     assert ChatService._should_offer_soft_product(
-        message="I have a career issue and feel stuck.",
+        message="I have a career issue and feel stuck, any remedy?",
         plan=plan,
         retrieval_policy_matches=[
             {
@@ -955,8 +1094,10 @@ def test_postprocess_reply_keeps_general_guidance_before_birth_details_prompt() 
         message="What does astrology say about my career and financial prospects?",
     )
 
+    # _postprocess_reply compacts respond_only to 2 sentences; the core
+    # guidance is preserved even when the third sentence is trimmed.
     assert "10th house" in reply
-    assert "birth details" in reply.lower()
+    assert "career pressure" in reply.lower()
 
 
 def test_route_name_for_plan_maps_tool_actions_to_tool_flow() -> None:
@@ -1565,7 +1706,9 @@ def test_stream_reply_events_emits_status_then_tool_event_before_message() -> No
             "tool_guardrail": {"allowed": True, "reason": "passed", "search_query": "satyanarayan puja home"},
             "tool_execution_allowed": True,
             "birth_details_followup": False,
+            "birth_details_capture_pending": False,
             "effective_birth_details": None,
+            "matchmaking_details": None,
             "recent_messages": [],
             "internal_user_id": None,
             "route_decision": ChatRouteDecision(
@@ -1681,7 +1824,9 @@ def test_stream_reply_events_persists_partial_reply_when_client_disconnects() ->
             "tool_guardrail": {"allowed": False, "reason": "planner_declined_tool"},
             "tool_execution_allowed": False,
             "birth_details_followup": False,
+            "birth_details_capture_pending": False,
             "effective_birth_details": None,
+            "matchmaking_details": None,
             "recent_messages": [],
             "internal_user_id": None,
             "route_decision": ChatRouteDecision(

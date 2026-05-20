@@ -1,7 +1,7 @@
 import pytest
 
 from src.core.embeddings import build_local_embedding_vector
-from src.core.rag import RAGService, RetrievalDocument
+from src.core.rag import RAGService, RetrievalDocument, clear_documents_cache
 from src.db.models import Embedding
 from src.db.session import SessionLocal
 from sqlalchemy import delete
@@ -45,9 +45,11 @@ def test_rag_prefers_action_aligned_product_doc() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         hits = service.retrieve("career support", top_k=2, action="recommend_product")
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert hits[0]["title"] == "rudraksha guide"
@@ -92,9 +94,11 @@ def test_rag_matches_semantic_synonyms_for_career_queries() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         hits = service.retrieve("job stress", top_k=2, action="respond_only")
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert hits
@@ -139,9 +143,11 @@ def test_rag_filters_to_booking_domains_for_booking_action() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         hits = service.retrieve("book puja", top_k=2, action="book_pooja")
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert hits
@@ -186,7 +192,8 @@ def test_rag_bundle_separates_policy_and_knowledge_for_product_action() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         payload = service.retrieve_context_bundle(
             "career confusion",
             top_k=3,
@@ -194,6 +201,7 @@ def test_rag_bundle_separates_policy_and_knowledge_for_product_action() -> None:
             planner_query="rudraksha career support",
         )
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert payload["knowledge_chunks"]
@@ -242,7 +250,8 @@ def test_rag_context_cache_respects_domain_filters() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         knowledge_payload = service.retrieve_context(
             "career support",
             2,
@@ -256,6 +265,7 @@ def test_rag_context_cache_respects_domain_filters() -> None:
             domains={"product_policy"},
         )
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
         RAGService._query_cache.clear()
         RAGService._query_cache.update(original_cache)
@@ -287,7 +297,8 @@ def test_rag_bundle_uses_planner_query_to_recover_knowledge_matches() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         payload = service.retrieve_context_bundle(
             "what should i do",
             top_k=2,
@@ -295,6 +306,7 @@ def test_rag_bundle_uses_planner_query_to_recover_knowledge_matches() -> None:
             planner_query="saturn career delay",
         )
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert payload["knowledge_chunks"]
@@ -324,7 +336,8 @@ def test_rag_bundle_falls_back_to_user_query_for_policy_matches() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         payload = service.retrieve_context_bundle(
             "book temple puja near me",
             top_k=2,
@@ -332,6 +345,7 @@ def test_rag_bundle_falls_back_to_user_query_for_policy_matches() -> None:
             planner_query="spiritual support",
         )
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert payload["policy_chunks"]
@@ -388,8 +402,11 @@ def test_rag_ignores_embeddings_from_other_models(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("src.core.rag.settings.RAG_EMBEDDING_PROVIDER", "local_hash")
     monkeypatch.setattr("src.core.rag.settings.RAG_EMBEDDING_MODEL", "active-model-v1")
 
+    original_documents = RAGService._documents
     db = SessionLocal()
     try:
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: [])  # type: ignore[method-assign]
         db.execute(delete(Embedding))
         db.commit()
         db.add_all(
@@ -430,6 +447,8 @@ def test_rag_ignores_embeddings_from_other_models(monkeypatch: pytest.MonkeyPatc
             planner_query="career work support",
         )
     finally:
+        clear_documents_cache()
+        RAGService._documents = original_documents  # type: ignore[method-assign]
         db.execute(delete(Embedding))
         db.commit()
         db.close()
@@ -462,8 +481,9 @@ def test_rag_merges_filesystem_fallback_when_embedding_store_is_partial() -> Non
         )
         db.commit()
 
-        RAGService._documents = staticmethod(  # type: ignore[method-assign]
-            lambda: [
+        clear_documents_cache()
+        RAGService._documents = classmethod(  # type: ignore[method-assign]
+            lambda cls: [
                 RetrievalDocument(
                     title="db only",
                     path="db_only.txt",
@@ -505,6 +525,7 @@ def test_rag_merges_filesystem_fallback_when_embedding_store_is_partial() -> Non
             planner_query="career patience timing",
         )
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
         db.execute(delete(Embedding))
         db.commit()
@@ -556,9 +577,11 @@ def test_rag_prefers_exact_planet_house_match_for_astrology_query() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         hits = service.retrieve("What does Saturn in 10th house mean for career?", top_k=2, action="respond_only")
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert hits
@@ -590,9 +613,11 @@ def test_rag_expands_career_query_to_tenth_house_context() -> None:
     ]
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         hits = service.retrieve("Will I get a job change soon?", top_k=2, action="respond_only")
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert hits
@@ -640,7 +665,8 @@ def test_rag_uses_chart_context_to_prefer_chart_aligned_match() -> None:
     }
 
     try:
-        RAGService._documents = staticmethod(lambda: docs)  # type: ignore[method-assign]
+        clear_documents_cache()
+        RAGService._documents = classmethod(lambda cls: docs)  # type: ignore[method-assign]
         hits = service.retrieve(
             "Will I get a job change soon?",
             top_k=2,
@@ -648,6 +674,7 @@ def test_rag_uses_chart_context_to_prefer_chart_aligned_match() -> None:
             chart_context=chart_context,
         )
     finally:
+        clear_documents_cache()
         RAGService._documents = original_documents  # type: ignore[method-assign]
 
     assert hits

@@ -44,6 +44,7 @@ class User(Base, TimestampMixin):
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(32), default="customer")
     preferred_language: Mapped[str] = mapped_column(String(16), default="en")
+    birth_details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")
     memories: Mapped[list["Memory"]] = relationship(back_populates="user")
@@ -151,3 +152,78 @@ class Embedding(Base, TimestampMixin):
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     vector_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     vector_pg: Mapped[object | None] = mapped_column(EMBEDDING_VECTOR_TYPE, nullable=True)
+
+
+class DeviceToken(Base, TimestampMixin):
+    __tablename__ = "device_tokens"
+    __table_args__ = (UniqueConstraint("user_id", "token", name="uq_device_token_user_token"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token: Mapped[str] = mapped_column(String(512), index=True)
+    platform: Mapped[str] = mapped_column(String(16), default="expo")  # expo, fcm, apns
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+    user: Mapped[User] = relationship()
+
+
+class DailyInsightLog(Base):
+    """Track which users received a daily insight and when."""
+    __tablename__ = "daily_insight_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    generated_for_date: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD
+    push_delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    push_tapped: Mapped[bool] = mapped_column(Boolean, default=False)
+    insight_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user: Mapped[User] = relationship()
+
+
+class BehaviorEvent(Base):
+    __tablename__ = "behavior_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id"),
+        nullable=True,
+        index=True,
+    )
+    session_id: Mapped[str] = mapped_column(String(128), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="client")
+    payload_json: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BehaviorProfile(Base, TimestampMixin):
+    __tablename__ = "behavior_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    scope_type: Mapped[str] = mapped_column(String(16), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id"),
+        nullable=True,
+        index=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    overall_alignment: Mapped[int] = mapped_column(Integer, default=50)
+    stress_score: Mapped[int] = mapped_column(Integer, default=0)
+    focus_score: Mapped[int] = mapped_column(Integer, default=50)
+    emotional_drift_score: Mapped[int] = mapped_column(Integer, default=0)
+    cognitive_overload_score: Mapped[int] = mapped_column(Integer, default=0)
+    clarity_score: Mapped[int] = mapped_column(Integer, default=50)
+    behavioral_consistency_score: Mapped[int] = mapped_column(Integer, default=50)
+    emotional_state: Mapped[str] = mapped_column(String(32), default="steady")
+    focus_state: Mapped[str] = mapped_column(String(32), default="neutral")
+    behavioral_state: Mapped[str] = mapped_column(String(32), default="steady")
+    signal_count: Mapped[int] = mapped_column(Integer, default=0)
+    summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signals_json: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

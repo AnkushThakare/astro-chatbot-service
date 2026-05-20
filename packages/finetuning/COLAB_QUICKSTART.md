@@ -34,6 +34,7 @@ The script executes these steps in order:
 3. `test_adapter.py`
 4. `evaluate_adapter.py`
 5. `compare_models.py`
+6. `package_outputs.py` if you want a validated archive for download
 
 ## Important Output Paths
 
@@ -43,6 +44,25 @@ The script executes these steps in order:
   `packages/finetuning/outputs/eval_runs/`
 - Base-vs-adapter comparison report:
   `packages/finetuning/outputs/comparison_runs/`
+
+## Package And Download Without Google Drive
+
+If `drive.mount('/content/drive')` fails in Colab, use the built-in packaging script instead:
+
+```bash
+python packages/finetuning/scripts/package_outputs.py --download
+```
+
+This does two useful things:
+
+- refuses to create an empty zip if only `.gitkeep` files exist
+- downloads `packages/finetuning/finetuning_outputs.zip` directly from Colab
+
+If you only want to create the archive:
+
+```bash
+python packages/finetuning/scripts/package_outputs.py
+```
 
 ## If You Hit GPU Memory Errors
 

@@ -196,6 +196,17 @@ class ConversationRepository:
         self.db.refresh(row)
         return row
 
+    def merge_session_state(
+        self,
+        session_id: str,
+        updates: dict,
+        *,
+        user_id: int | None = None,
+    ) -> Memory:
+        current = self.get_session_state(session_id) or {}
+        current.update(updates)
+        return self.save_session_state(session_id, current, user_id=user_id)
+
     def update_conversation_summary(self, session_id: str, summary: str) -> None:
         statement = select(Conversation).where(Conversation.session_id == session_id)
         conversation = self.db.execute(statement).scalar_one_or_none()

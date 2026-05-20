@@ -114,6 +114,17 @@ class Settings(BaseSettings):
     INTERNAL_API_KEY: str = Field(default="development-internal-key", alias="INTERNAL_API_KEY")
     EVAL_MODE: bool = Field(default=False, alias="EVAL_MODE")
     GROQ_API_KEY_EVAL: str | None = Field(default=None, alias="GROQ_API_KEY_EVAL")
+
+    # Multi-provider LLM config — defaults fall back to GROQ_* values
+    PLANNER_LLM_PROVIDER: str = Field(default="groq", alias="PLANNER_LLM_PROVIDER")
+    PLANNER_LLM_API_KEY: str | None = Field(default=None, alias="PLANNER_LLM_API_KEY")
+    PLANNER_LLM_BASE_URL: str | None = Field(default=None, alias="PLANNER_LLM_BASE_URL")
+    PLANNER_LLM_MODEL: str | None = Field(default=None, alias="PLANNER_LLM_MODEL")
+
+    RESPONSE_LLM_PROVIDER: str = Field(default="groq", alias="RESPONSE_LLM_PROVIDER")
+    RESPONSE_LLM_API_KEY: str | None = Field(default=None, alias="RESPONSE_LLM_API_KEY")
+    RESPONSE_LLM_BASE_URL: str | None = Field(default=None, alias="RESPONSE_LLM_BASE_URL")
+    RESPONSE_LLM_MODEL: str | None = Field(default=None, alias="RESPONSE_LLM_MODEL")
     DEFAULT_SYSTEM_PROMPT: str = Field(
         default=(
             "You are an astrology assistant. Be direct, careful, and explicit about "

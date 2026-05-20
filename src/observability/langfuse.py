@@ -38,24 +38,28 @@ def start_llm_generation(
     provider: str,
     session_id: str | None = None,
     user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Any | None:
     client = get_langfuse_client()
     if client is None:
         return None
 
     try:
+        trace_metadata = {"provider": provider}
+        if metadata:
+            trace_metadata.update(metadata)
         trace = client.trace(
             name="chat-message",
             user_id=user_id,
             session_id=session_id,
             input=messages,
-            metadata={"provider": provider},
+            metadata=trace_metadata,
         )
         return trace.generation(
             name="llm-completion",
             model=model,
             input=messages,
-            metadata={"provider": provider},
+            metadata=trace_metadata,
         )
     except Exception:
         logger.exception("Failed to start Langfuse generation")

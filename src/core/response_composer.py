@@ -221,3 +221,69 @@ def build_cards(tool_outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
     return cards
+
+
+def normalize_tool_outputs(tool_outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for output in tool_outputs:
+        tool = output.get("tool")
+        if tool == "recommend_product":
+            normalized.append(
+                {
+                    "type": "product",
+                    "reason": output.get("search_query") or output.get("summary") or "product support",
+                    "items": [
+                        {
+                            "id": item.get("id"),
+                            "name": item.get("name"),
+                        }
+                        for item in output.get("items", [])[:3]
+                    ],
+                }
+            )
+        elif tool == "book_pooja":
+            normalized.append(
+                {
+                    "type": "booking",
+                    "reason": output.get("summary") or "pooja support",
+                    "items": [
+                        {
+                            "id": item.get("id"),
+                            "name": item.get("name"),
+                        }
+                        for bucket in ("home_puja_services", "temple_services")
+                        for item in output.get(bucket, [])[:2]
+                    ],
+                }
+            )
+        elif tool == "suggest_consultant":
+            normalized.append(
+                {
+                    "type": "consultation",
+                    "reason": output.get("summary") or "consultation support",
+                    "items": [
+                        {
+                            "id": item.get("id"),
+                            "name": item.get("name"),
+                        }
+                        for item in output.get("items", [])[:3]
+                    ],
+                }
+            )
+        elif tool == "show_kundali":
+            normalized.append(
+                {
+                    "type": "kundali",
+                    "reason": output.get("summary") or "kundali summary",
+                    "items": [],
+                }
+            )
+        elif tool == "matchmaking":
+            normalized.append(
+                {
+                    "type": "matchmaking",
+                    "reason": output.get("summary") or "matchmaking summary",
+                    "items": [],
+                }
+            )
+    return normalized

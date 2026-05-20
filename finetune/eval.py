@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -249,6 +251,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _planner_settings_for_eval() -> tuple[Any, str]:
+    eval_mode = settings.EVAL_MODE or os.getenv("EVAL_MODE") == "1"
+    run_id = f"planner-eval-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    os.environ["EVAL_RUN_ID"] = run_id
+    if not eval_mode:
+        return settings, run_id
+
+    eval_api_key = settings.GROQ_API_KEY_EVAL or settings.GROQ_API_KEY
+    return settings.model_copy(
+        update={
+            "EVAL_MODE": True,
+            "GROQ_API_KEY": eval_api_key,
+        }
+    ), run_id
+
+
 async def _main() -> int:
     args = parse_args()
     examples = load_examples(args.dataset)
@@ -260,12 +278,15 @@ async def _main() -> int:
         examples = examples[args.offset :]
     if args.limit is not None:
         examples = examples[: args.limit]
-    planner = ConversationPlanner(GroqClient(settings), settings.GROQ_PLANNER_MODEL)
-    if not settings.GROQ_API_KEY:
+    eval_settings, run_id = _planner_settings_for_eval()
+    planner = ConversationPlanner(GroqClient(eval_settings), eval_settings.GROQ_PLANNER_MODEL)
+    if not eval_settings.GROQ_API_KEY:
         print(
             "Warning: GROQ_API_KEY is not configured. The planner will fall back to "
             "respond_only, so accuracy metrics will not reflect live model behavior."
         )
+    elif eval_settings.EVAL_MODE:
+        print(f"Running planner eval in isolated mode with run_id={run_id}")
     predictions = await evaluate_examples(examples, planner, sleep_seconds=args.sleep_seconds)
     summary = compute_summary(predictions)
 

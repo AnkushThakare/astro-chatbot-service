@@ -72,12 +72,12 @@ def decode_jwt_token(token: str) -> AuthenticatedUser:
         claims = jwt.decode(**decode_kwargs)
     except ExpiredSignatureError as exc:
         raise ExpiredTokenError("Bearer token expired") from exc
-    except JWTClaimsError as exc:
-        raise InvalidTokenError(f"Invalid bearer token claims: {exc}") from exc
     except JWTError as exc:
         detail = str(exc)
         if "signature" in detail.lower():
             raise InvalidSignatureTokenError("Invalid bearer token signature") from exc
+        if JWTClaimsError is not JWTError and isinstance(exc, JWTClaimsError):
+            raise InvalidTokenError(f"Invalid bearer token claims: {exc}") from exc
         raise InvalidTokenError(f"Invalid bearer token: {exc}") from exc
 
     user_id = claims.get("sub") or claims.get("user_id")

@@ -1,0 +1,6 @@
+{"id":"career_soft_yes","message":"I have career delay and pressure in my job right now.","action":"respond_only","policy_allows_product":true,"expected_should_recommend":true,"expected_query":"rudraksha career"}
+{"id":"peace_soft_yes","message":"I feel anxious and want some peace of mind.","action":"respond_only","policy_allows_product":true,"expected_should_recommend":true,"expected_query":"rudraksha peace"}
+{"id":"declined_product_no","message":"I have career issues but do not want product suggestions right now.","action":"respond_only","policy_allows_product":true,"expected_should_recommend":false}
+{"id":"single_step_no","message":"I feel stuck in career, just give me one practical next step.","action":"respond_only","policy_allows_product":true,"expected_should_recommend":false}
+{"id":"policy_block_no","message":"I have relationship stress and need guidance.","action":"respond_only","policy_allows_product":false,"expected_should_recommend":false}
+{"id":"explicit_product_plan_no_soft","message":"Suggest a rudraksha for my career.","action":"recommend_product","policy_allows_product":true,"expected_should_recommend":false}

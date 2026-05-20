@@ -156,6 +156,24 @@ def validate_product_search_query(search_query: str) -> str:
     return result if result else search_query
 
 
+def _is_specific_product_query(query: str) -> bool:
+    """Check if the query already targets a specific product (mukhi number, product type, etc.)."""
+    q = query.lower()
+    # Has a mukhi number (e.g., "5 mukhi rudraksha")
+    if "mukhi" in q:
+        return True
+    # Has a specific product type with a descriptor (e.g., "protection bracelet")
+    product_types = {"bracelet", "mala", "pendant"}
+    has_product_type = any(pt in q for pt in product_types)
+    has_descriptor = any(d in q for d in (
+        "energy", "protection", "planetary", "calming", "solar",
+        "healing", "meditation", "grounding",
+    ))
+    if has_product_type and has_descriptor:
+        return True
+    return False
+
+
 def enrich_product_query(
     search_query: str,
     afflicted_planets: list[str] | None = None,
@@ -163,17 +181,22 @@ def enrich_product_query(
 ) -> str:
     """Enrich a product search query using chart context.
 
-    If the user's query is vague (e.g., "rudraksha for protection"),
-    use their chart data to suggest the most relevant product.
+    Priority:
+    1. If the LLM already generated a specific query (has mukhi number, specific
+       product type), trust it and pass through.
+    2. If the query is vague, use concern maps and chart data to make it specific.
     """
     query_lower = search_query.lower()
 
-    # First check if query already has a specific mukhi number
-    if "mukhi" in query_lower:
+    # If the query is already specific (e.g., "7 mukhi rudraksha"), trust it
+    if _is_specific_product_query(query_lower):
         return validate_product_search_query(search_query)
 
-    # Try to match user concern to specific product
-    for concern, product in CONCERN_PRODUCT_MAP.items():
+    # Query is vague — try to enrich it
+
+    # Try to match user concern to specific product (longest match first
+    # so "career stagnation" beats plain "career")
+    for concern, product in sorted(CONCERN_PRODUCT_MAP.items(), key=lambda x: len(x[0]), reverse=True):
         if concern in query_lower:
             return product
 
@@ -191,3 +214,57 @@ def enrich_product_query(
             return planet_data["primary"]
 
     return validate_product_search_query(search_query)
+
+
+def build_product_query_fallbacks(
+    search_query: str,
+    afflicted_planets: list[str] | None = None,
+    current_dasha: str | None = None,
+) -> list[str]:
+    """Build a narrow-to-broad fallback chain for catalog lookup.
+
+    The first query is always the enriched query. Broader fallbacks let the
+    caller retry without inventing new recommendation logic at execution time.
+    """
+    primary_query = enrich_product_query(
+        search_query,
+        afflicted_planets=afflicted_planets,
+        current_dasha=current_dasha,
+    ).strip()
+    raw_query = validate_product_search_query(search_query).strip()
+
+    candidates: list[str] = []
+
+    def _add(value: str | None) -> None:
+        if not value:
+            return
+        normalized = " ".join(value.lower().split()).strip()
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+
+    _add(primary_query)
+    _add(raw_query)
+
+    tokens = [token for token in primary_query.lower().split() if token]
+    if tokens:
+        for size in range(min(3, len(tokens)), 0, -1):
+            _add(" ".join(tokens[:size]))
+        for token in tokens:
+            if token in {"rudraksha", "bracelet", "mala", "mukhi", "pendant"}:
+                _add(token)
+
+    if afflicted_planets:
+        for planet in afflicted_planets:
+            planet_data = PLANET_PRODUCT_MAP.get(planet.lower())
+            if not planet_data:
+                continue
+            _add(planet_data.get("primary"))
+            _add(planet_data.get("bracelet"))
+
+    if current_dasha:
+        planet_data = PLANET_PRODUCT_MAP.get(current_dasha.lower())
+        if planet_data:
+            _add(planet_data.get("primary"))
+
+    _add("rudraksha")
+    return candidates

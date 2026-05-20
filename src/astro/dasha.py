@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 MAHADASHA_SEQUENCE = [
@@ -123,7 +123,7 @@ def calculate_vimshottari_dasha(
         cursor = end
 
     # Find current mahadasha
-    now = datetime.now()
+    now = datetime.now(timezone.utc) if birth_datetime.tzinfo else datetime.now()
     current_maha = timeline[0]
     for entry in timeline:
         if entry["start"] <= now < entry["end"]:

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: astro_chatbot
       POSTGRES_USER: postgres
@@ -19,20 +19,35 @@ services:
     build: .
     env_file:
       - .env
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8010
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     environment:
       APP_ENV: development
       APP_HOST: 0.0.0.0
-      APP_PORT: 8010
-      CORE_SERVICE_BASE_URL: ${CORE_SERVICE_BASE_URL:-http://host.docker.internal:8000/api/v1}
+      APP_PORT: 8000
+      CORE_SERVICE_BASE_URL: ${CORE_SERVICE_BASE_URL:-http://host.docker.internal:8002/api/v1}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/astro_chatbot
       ASYNC_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/astro_chatbot
+      RAG_VECTOR_BACKEND: ${RAG_VECTOR_BACKEND:-pgvector}
+      RAG_EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-local_hash}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-local-hash-v1}
       ASTROLOGY_ENGINE_MODE: stub
     ports:
-      - "8010:8010"
+      - "8010:8000"
     depends_on:
       - postgres
       - redis
+
+  eval:
+    build: .
+    profiles:
+      - eval
+    env_file:
+      - .env
+    environment:
+      EVAL_MODE: 1
+      GROQ_API_KEY: ${GROQ_API_KEY_EVAL:-${GROQ_API_KEY}}
+    entrypoint: python
+    command: finetune/eval.py
 
 volumes:
   postgres_data:

@@ -2,7 +2,7 @@ PY = python
 VENV ?= .venv
 ACTIVATE = . $(VENV)/bin/activate
 
-.PHONY: venv install format lint typecheck test test-docker eval-planner-docker check run ingest-rag
+.PHONY: venv install format lint typecheck test test-docker eval-planner-docker eval-retrieval-docker eval-retrieval-heuristic-docker eval-retrieval-groq-docker eval-retrieval-compare-docker eval-soft-product-docker check run ingest-rag compose-up migrate-db ingest-rag-docker
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -32,6 +32,26 @@ eval-planner-docker:
 	docker build -f Dockerfile.test -t astro-chatbot-service-test .
 	docker run --rm --entrypoint python astro-chatbot-service-test finetune/eval.py
 
+eval-retrieval-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm --entrypoint python astro-chatbot-service-test finetune/retrieval_eval.py
+
+eval-retrieval-heuristic-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm --entrypoint python astro-chatbot-service-test finetune/retrieval_eval.py --reranker-provider heuristic --reranker-model heuristic-v1
+
+eval-retrieval-groq-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm --entrypoint python astro-chatbot-service-test finetune/retrieval_eval.py --reranker-provider groq_listwise
+
+eval-retrieval-compare-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm --entrypoint python astro-chatbot-service-test finetune/retrieval_eval.py --compare-rerankers heuristic,groq_listwise
+
+eval-soft-product-docker:
+	docker build -f Dockerfile.test -t astro-chatbot-service-test .
+	docker run --rm --entrypoint python astro-chatbot-service-test finetune/product_recommendation_eval.py
+
 check:
 	$(ACTIVATE); $(MAKE) format
 	$(ACTIVATE); $(MAKE) lint
@@ -43,3 +63,12 @@ run:
 
 ingest-rag:
 	$(ACTIVATE); python -m scripts.embed_astrology_texts
+
+compose-up:
+	docker compose up -d postgres redis
+
+migrate-db:
+	docker compose run --rm api python -m alembic upgrade head
+
+ingest-rag-docker:
+	docker compose run --rm api python -m scripts.embed_astrology_texts

@@ -20,6 +20,18 @@ class MemoryService:
         rows = self.repository.list_recent_turns(session_id, limit)
         return [{"role": row.role, "content": row.content} for row in rows]
 
+    def get_session_state(self, session_id: str) -> dict:
+        return self.repository.get_session_state(session_id) or {}
+
+    def save_session_state(
+        self,
+        session_id: str,
+        state: dict,
+        *,
+        user_id: int | None = None,
+    ) -> None:
+        self.repository.save_session_state(session_id, state, user_id=user_id)
+
     def long_term_context(
         self,
         session_id: str,

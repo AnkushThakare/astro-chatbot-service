@@ -5,6 +5,7 @@ import pytest
 from src.core.product_policy import (
     CONCERN_PRODUCT_MAP,
     PLANET_PRODUCT_MAP,
+    build_product_query_fallbacks,
     enrich_product_query,
     validate_product_search_query,
 )
@@ -94,3 +95,23 @@ class TestEnrichProductQuery:
     def test_afflicted_planet_takes_priority_over_generic(self) -> None:
         result = enrich_product_query("rudraksha", afflicted_planets=["Moon", "Saturn"])
         assert "2 mukhi" in result  # Moon is first afflicted planet
+
+
+class TestProductQueryFallbacks:
+    def test_builds_narrow_to_broad_fallback_chain(self) -> None:
+        fallbacks = build_product_query_fallbacks(
+            "career growth remedy",
+            afflicted_planets=["Saturn"],
+        )
+
+        assert fallbacks[0] == "5 mukhi rudraksha"
+        assert "career growth remedy" in fallbacks
+        assert "rudraksha" in fallbacks
+
+    def test_includes_dasha_based_fallback_when_available(self) -> None:
+        fallbacks = build_product_query_fallbacks(
+            "support for this period",
+            current_dasha="Rahu",
+        )
+
+        assert "8 mukhi rudraksha" in fallbacks

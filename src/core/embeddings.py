@@ -112,6 +112,70 @@ class LocalHashEmbeddingProvider:
 
 
 @dataclass(frozen=True)
+class GeminiEmbeddingProvider:
+    """Embedding provider using Google's native Gemini embedding API.
+
+    Uses the embedContent / batchEmbedContents endpoints directly
+    (the OpenAI-compatible endpoint doesn't support embeddings).
+    """
+
+    api_key: str
+    timeout_seconds: int
+    model_name: str = "gemini-embedding-001"
+    provider_name: str = "gemini"
+    _base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
+    def _single_endpoint(self) -> str:
+        return f"{self._base_url}/models/{self.model_name}:embedContent?key={self.api_key}"
+
+    def _batch_endpoint(self) -> str:
+        return f"{self._base_url}/models/{self.model_name}:batchEmbedContents?key={self.api_key}"
+
+    def embed_text(self, text: str) -> list[float]:
+        payload = {
+            "model": f"models/{self.model_name}",
+            "content": {"parts": [{"text": text}]},
+        }
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            response = client.post(self._single_endpoint(), json=payload)
+            response.raise_for_status()
+            parsed = response.json()
+
+        values = parsed.get("embedding", {}).get("values")
+        if not isinstance(values, list):
+            raise ValueError("Gemini embedding response missing 'embedding.values'")
+        return [float(v) for v in values]
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        if len(texts) == 1:
+            return [self.embed_text(texts[0])]
+
+        # Batch endpoint accepts up to 100 texts
+        requests = [
+            {
+                "model": f"models/{self.model_name}",
+                "content": {"parts": [{"text": text}]},
+            }
+            for text in texts
+        ]
+        payload = {"requests": requests}
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            response = client.post(self._batch_endpoint(), json=payload)
+            response.raise_for_status()
+            parsed = response.json()
+
+        embeddings = parsed.get("embeddings")
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            raise ValueError("Gemini batch embedding response count mismatch")
+        return [
+            [float(v) for v in emb.get("values", [])]
+            for emb in embeddings
+        ]
+
+
+@dataclass(frozen=True)
 class OpenAICompatibleEmbeddingProvider:
     api_key: str
     base_url: str
@@ -183,6 +247,14 @@ def _provider_from_config(
     normalized_provider = provider_name.strip().lower().replace("-", "_")
     if normalized_provider == "local_hash":
         return LocalHashEmbeddingProvider(dimensions=dimensions, model_name=model_name)
+    if normalized_provider == "gemini":
+        if not api_key:
+            raise ValueError("RAG_EMBEDDING_API_KEY is required for gemini provider")
+        return GeminiEmbeddingProvider(
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            model_name=model_name,
+        )
     if normalized_provider == "openai_compatible":
         if not api_key:
             raise ValueError("RAG_EMBEDDING_API_KEY is required for openai_compatible provider")

@@ -21,6 +21,10 @@ if (Test-Path $envFile) {
 if ($env:GROQ_API_KEY) {
     $dockerArgs += @("-e", "GROQ_API_KEY=$env:GROQ_API_KEY")
 }
+$dockerArgs += @("-e", "EVAL_MODE=1")
+if ($env:GROQ_API_KEY_EVAL) {
+    $dockerArgs += @("-e", "GROQ_API_KEY_EVAL=$env:GROQ_API_KEY_EVAL")
+}
 $dockerArgs += @("--entrypoint", "python", $imageName, "finetune/eval.py")
 
 if ($args.Count -gt 0) {

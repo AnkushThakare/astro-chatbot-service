@@ -118,18 +118,23 @@ SEXUAL_PATTERNS = (
     "abuse",
 )
 POLITICAL_PATTERNS = (
-    "election",
-    "prime minister",
-    "politician",
-    "president",
-    "government",
-    "modi",
-    "trump",
-    "biden",
+    "election prediction",
+    "election result",
+    "who will win election",
+    "prime minister prediction",
+    "politician horoscope",
+    "president horoscope",
+    "government prediction",
+    "modi horoscope",
+    "modi kundali",
+    "trump horoscope",
+    "trump kundali",
+    "biden horoscope",
     "rahul gandhi",
-    "kejriwal",
-    "yogi",
-    "amit shah",
+    "kejriwal kundali",
+    "kejriwal horoscope",
+    "yogi horoscope",
+    "amit shah horoscope",
 )
 OUT_OF_DOMAIN_PATTERNS = (
     "debug this code",
@@ -375,7 +380,7 @@ def tool_specific_guardrail(
                 "If you want, I can suggest a simple prayer or calming spiritual practice instead."
             ),
         )
-    if intent in {"recommend_product", "book_pooja"} and _contains_any(lowered, FEAR_MONETIZATION_PATTERNS):
+    if intent in {"recommend_product", "book_pooja", "confirm_booking"} and _contains_any(lowered, FEAR_MONETIZATION_PATTERNS):
         return GuardrailDecision(
             allowed=False,
             risk_level="high",

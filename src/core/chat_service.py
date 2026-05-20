@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 import time
@@ -18,18 +18,30 @@ from src.astro.predictions import generate_predictive_insights, format_predictio
 from src.core.config import settings
 from src.core.confidence_policy import get_threshold, is_confident
 from src.core.core_service import CoreServiceClient
+from src.core.energy_flow import EnergyFlowService
 from src.core.emotion import detect_emotion
 from src.core.guardrails import final_response_guardrail, pre_scope_guardrail, sanitize_user_input, tool_specific_guardrail
 from src.core.logging import get_logger
-from src.core.llm import GroqClient
+from src.core.llm import GroqClient, LLMClient, create_llm_client
 from src.core.memory import MemoryService
 from src.core.pattern_engine import build_pattern_summary
 from src.core.planner import ConversationPlanner, PlannerResult, ToolCallPlanner
 from src.core.persona import build_persona_prompt
 from src.core.prompt_registry import current_prompt_metadata
-from src.core.product_policy import enrich_product_query, validate_product_search_query
+from src.core.product_catalog import catalog_index
+from src.core.product_policy import (
+    build_product_query_fallbacks,
+    enrich_product_query,
+    validate_product_search_query,
+)
 from src.core.rag import RAGService
-from src.core.response_composer import build_cards, build_style_instruction, compose_blocked_reply, compose_clarification_reply
+from src.core.response_composer import (
+    build_cards,
+    build_style_instruction,
+    compose_blocked_reply,
+    compose_clarification_reply,
+    normalize_tool_outputs,
+)
 from src.core.router import ChatRouteDecision, pick_model_route
 from src.core.streaming import chunk_text
 from src.db.repositories.users import UserRepository
@@ -63,7 +75,7 @@ def _set_cached_birth_details(session_id: str, details: dict[str, Any]) -> None:
     _SESSION_BIRTH_CACHE[session_id] = (details, time.time())
     # Evict old entries to prevent memory leak (keep last 500 sessions)
     if len(_SESSION_BIRTH_CACHE) > 500:
-        oldest = sorted(_SESSION_BIRTH_CACHE, key=lambda k: _SESSION_BIRTH_CACHE[k][1])
+        oldest = sorted(list(_SESSION_BIRTH_CACHE.keys()), key=lambda k: _SESSION_BIRTH_CACHE.get(k, (None, 0))[1])
         for key in oldest[:100]:
             _SESSION_BIRTH_CACHE.pop(key, None)
 
@@ -267,6 +279,55 @@ class ChatService:
         "venus",
         "zodiac",
     }
+    SEMANTIC_PROBLEM_KEYWORDS = {
+        "career": {"career", "job", "profession", "promotion", "recognition", "boss", "work", "office", "unemployed"},
+        "marriage": {"marriage", "shaadi", "wedding", "manglik", "mangal", "divorce", "matchmaking", "compatibility"},
+        "love": {"love", "relationship", "partner", "breakup", "dating", "romance"},
+        "finance": {"finance", "financial", "money", "income", "wealth", "debt", "loan"},
+        "health": {"health", "stress", "anxiety", "sleep", "illness", "wellbeing"},
+        "business": {"business", "startup", "clients", "sales", "revenue", "loss"},
+        "family": {"family", "parents", "mother", "father", "children", "home", "relatives"},
+        "education": {"education", "study", "studies", "exam", "college", "school", "memory"},
+        "spiritual": {"spiritual", "sadhana", "meditation", "mantra", "peace", "inner", "prayer"},
+    }
+    HIGH_SEVERITY_TOKENS = {
+        "unemployed",
+        "depressed",
+        "panic",
+        "desperate",
+        "stuck for years",
+        "nothing works",
+        "failed again",
+        "chronic",
+    }
+    MEDIUM_SEVERITY_TOKENS = {
+        "stuck",
+        "delayed",
+        "delay",
+        "stress",
+        "worried",
+        "anxiety",
+        "ignored",
+        "problem",
+        "problems",
+        "issue",
+    }
+    REMEDY_INTEREST_TOKENS = {
+        "remedy",
+        "remedies",
+        "solution",
+        "product",
+        "products",
+        "rudraksha",
+        "bracelet",
+        "mala",
+        "pooja",
+        "puja",
+        "mantra",
+        "consult",
+        "consultant",
+        "astrologer",
+    }
     PUBLIC_FIGURE_TOKENS = {
         "actor",
         "actress",
@@ -420,9 +481,13 @@ class ChatService:
         self.settings = settings
         self.memory_service = MemoryService(db)
         self.user_repository = UserRepository(db)
+        self.energy_flow_service = EnergyFlowService(db)
         self.rag_service = RAGService(db)
-        self.groq_client = GroqClient(settings)
-        self.planner = ToolCallPlanner(self.groq_client)
+        self.response_llm = create_llm_client(settings, role="response")
+        self.planner_llm = create_llm_client(settings, role="planner")
+        # Backward-compat alias used by memory extraction and other callers
+        self.groq_client = self.response_llm
+        self.planner = ToolCallPlanner(self.planner_llm)
         self.core_service_client = CoreServiceClient(settings)
 
     def _resolve_internal_user_id(self, current_user: AuthenticatedUser | None) -> int | None:
@@ -790,6 +855,318 @@ class ChatService:
             summary if isinstance(summary, str) else None,
         )
 
+    @staticmethod
+    def _merge_unique_strings(existing: list[str], additions: list[str], *, limit: int) -> list[str]:
+        merged = [item for item in existing if isinstance(item, str) and item.strip()]
+        for item in additions:
+            if not isinstance(item, str):
+                continue
+            normalized = item.strip()
+            if normalized and normalized not in merged:
+                merged.append(normalized)
+        return merged[-limit:]
+
+    @classmethod
+    def _conversation_context_snapshot(cls, session_state: dict[str, Any] | None) -> dict[str, Any]:
+        session_state = session_state or {}
+        return {
+            "main_concern": session_state.get("main_concern"),
+            "previous_tools": list(session_state.get("previous_tools") or []),
+            "products_shown": list(session_state.get("products_shown") or []),
+            "services_shown": list(session_state.get("services_shown") or []),
+            "consultation_history": list(session_state.get("consultation_history") or []),
+        }
+
+    @staticmethod
+    def _simplify_emotion_label(label: str) -> str:
+        lowered = label.lower()
+        if "anx" in lowered:
+            return "anxiety"
+        if "fear" in lowered:
+            return "fear"
+        if "career" in lowered or "stress" in lowered:
+            return "frustration"
+        if "relation" in lowered:
+            return "sadness"
+        if "confus" in lowered:
+            return "confusion"
+        if "devot" in lowered:
+            return "devotional"
+        return "calm"
+
+    @classmethod
+    def _semantic_understanding(
+        cls,
+        *,
+        message: str,
+        emotion_label: str,
+        session_state: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        lowered = message.lower()
+        tokens = set(re.findall(r"[a-z0-9']+", lowered))
+        problem = "general"
+        best_score = 0
+        for candidate, keywords in cls.SEMANTIC_PROBLEM_KEYWORDS.items():
+            score = len(tokens & keywords)
+            if score > best_score:
+                best_score = score
+                problem = candidate
+        if best_score == 0:
+            prior = cls._conversation_context_snapshot(session_state).get("main_concern")
+            if isinstance(prior, str) and prior:
+                problem = prior
+
+        sub_problem = "general"
+        if "unemployed" in lowered:
+            sub_problem = "unemployment"
+        elif "boss" in lowered and ("ignore" in lowered or "ignored" in lowered):
+            sub_problem = "recognition_issue"
+        elif "delay" in lowered or "stuck" in lowered or "not giving results" in lowered:
+            sub_problem = "growth_delay"
+        elif "stress" in lowered or "anxiety" in lowered:
+            sub_problem = "stress"
+        elif "compatibility" in lowered or "matchmaking" in lowered:
+            sub_problem = "compatibility"
+
+        severity = "low"
+        if any(pattern in lowered for pattern in cls.HIGH_SEVERITY_TOKENS):
+            severity = "high"
+        elif any(pattern in lowered for pattern in cls.MEDIUM_SEVERITY_TOKENS):
+            severity = "medium"
+
+        intent = "guidance"
+        explicit_action = ConversationPlanner.explicit_tool_action(message)
+        if explicit_action == "recommend_product":
+            intent = "product"
+        elif explicit_action == "suggest_consultant":
+            intent = "consultation"
+        elif explicit_action == "book_pooja":
+            intent = "pooja"
+        elif explicit_action in {"confirm_booking", "schedule_consultation", "check_booking"}:
+            intent = "booking"
+        elif explicit_action == "show_kundali":
+            intent = "prediction"
+        elif "remedy" in tokens or "remedies" in tokens or "mantra" in tokens:
+            intent = "remedy"
+        elif "when" in tokens or "timing" in tokens or "prediction" in tokens:
+            intent = "prediction"
+
+        remedy_interest = bool(tokens & cls.REMEDY_INTEREST_TOKENS)
+        return {
+            "problem": problem,
+            "sub_problem": sub_problem,
+            "emotion": cls._simplify_emotion_label(emotion_label),
+            "severity": severity,
+            "intent": intent,
+            "remedy_interest": remedy_interest,
+        }
+
+    @classmethod
+    def _behavior_signals(
+        cls,
+        *,
+        message: str,
+        semantic_understanding: dict[str, Any],
+        session_state: dict[str, Any] | None,
+    ) -> dict[str, int]:
+        lowered = message.lower()
+        context = cls._conversation_context_snapshot(session_state)
+        signals = {
+            "engagement": 0,
+            "remedy_interest": 0,
+            "product_intent": 0,
+            "consultation_intent": 0,
+            "pooja_intent": 0,
+            "avoidance": 0,
+            "explicit_request": 0,
+        }
+        main_concern = context.get("main_concern")
+        if isinstance(main_concern, str) and main_concern and main_concern == semantic_understanding.get("problem"):
+            if any(phrase in lowered for phrase in ("still", "again", "same", "stuck")):
+                signals["engagement"] += 30
+        if any(phrase in lowered for phrase in ("what remedies", "which remedy", "what can help", "solution")):
+            signals["remedy_interest"] += 40
+        explicit_action = ConversationPlanner.explicit_tool_action(message)
+        if explicit_action is not None:
+            signals["explicit_request"] += 50
+        if explicit_action == "recommend_product":
+            signals["product_intent"] += 50
+        elif explicit_action == "suggest_consultant":
+            signals["consultation_intent"] += 50
+        elif explicit_action == "book_pooja":
+            signals["pooja_intent"] += 50
+        if any(phrase in lowered for phrase in ("no product", "don't want product", "dont want product", "without product")):
+            signals["avoidance"] += 80
+        if lowered.strip() in {"tell me more", "go on", "continue", "check now"}:
+            signals["engagement"] += 25
+        return signals
+
+    @classmethod
+    def _recommendation_readiness(
+        cls,
+        *,
+        semantic_understanding: dict[str, Any],
+        conversation_context: dict[str, Any],
+        behavior_signals: dict[str, int],
+        recent_messages: list[dict[str, str]] | None,
+    ) -> dict[str, Any]:
+        severity_weight = {"low": 12, "medium": 22, "high": 34}[semantic_understanding.get("severity", "low")]
+        conversation_depth = min(len(recent_messages or []), 4) * 10
+        if conversation_context.get("main_concern") == semantic_understanding.get("problem"):
+            conversation_depth += 10
+        score = severity_weight
+        score += min(behavior_signals.get("engagement", 0), 30)
+        score += min(behavior_signals.get("remedy_interest", 0), 20)
+        score += min(behavior_signals.get("explicit_request", 0), 30)
+        if semantic_understanding.get("remedy_interest"):
+            score += 10
+        score -= min(behavior_signals.get("avoidance", 0), 40)
+        score = max(0, min(100, score + min(conversation_depth, 20)))
+        return {
+            "score": score,
+            "conversation_depth": conversation_depth,
+            "recommendation_ready": score >= 31,
+        }
+
+    @classmethod
+    def _should_prevent_duplicate_tool(
+        cls,
+        *,
+        action: str,
+        session_state: dict[str, Any] | None,
+        message: str,
+        readiness: dict[str, Any],
+    ) -> tuple[bool, str]:
+        explicit_action = ConversationPlanner.explicit_tool_action(message)
+        if explicit_action == action:
+            return False, "explicit_request"
+        context = cls._conversation_context_snapshot(session_state)
+        previous_tools = [tool for tool in context.get("previous_tools", []) if isinstance(tool, str)]
+        if previous_tools and previous_tools[-1] == action:
+            if readiness.get("score", 0) < 76:
+                return True, "recent_tool_repeat"
+        if action == "recommend_product" and context.get("products_shown"):
+            if readiness.get("score", 0) < 51:
+                return True, "products_already_shown"
+        if action == "book_pooja" and context.get("services_shown"):
+            return True, "services_already_shown"
+        if action == "suggest_consultant" and context.get("consultation_history"):
+            if readiness.get("score", 0) < 76:
+                return True, "consultant_already_shown"
+        return False, "allowed"
+
+    @classmethod
+    def _orchestrate_plan(
+        cls,
+        *,
+        plan: PlannerResult,
+        message: str,
+        session_state: dict[str, Any] | None,
+        semantic_understanding: dict[str, Any],
+        behavior_signals: dict[str, int],
+        recommendation_readiness: dict[str, Any],
+        birth_details: dict[str, Any] | None,
+        matchmaking_details: dict[str, Any] | None,
+    ) -> tuple[PlannerResult, dict[str, Any]]:
+        orchestration = {
+            "blocked_tool": None,
+            "reason": "unchanged",
+        }
+        explicit_action = ConversationPlanner.explicit_tool_action(message)
+        if explicit_action == "show_kundali" and birth_details is not None:
+            updated = plan.model_copy(
+                update={
+                    "action": "show_kundali",
+                    "should_call_tool": True,
+                    "arguments": {},
+                    "missing_information": [],
+                    "reasoning": f"{plan.reasoning} Explicit kundali request detected.",
+                }
+            )
+            return updated, {"blocked_tool": None, "reason": "explicit_kundali"}
+        if explicit_action == "matchmaking" and matchmaking_details is not None:
+            updated = plan.model_copy(
+                update={
+                    "action": "matchmaking",
+                    "should_call_tool": True,
+                    "arguments": {},
+                    "missing_information": [],
+                    "reasoning": f"{plan.reasoning} Explicit matchmaking request detected.",
+                }
+            )
+            return updated, {"blocked_tool": None, "reason": "explicit_matchmaking"}
+
+        if plan.action in {"recommend_product", "suggest_consultant", "book_pooja"}:
+            # Ensure search_query is populated even when explicit shortcut skipped planner
+            if not plan.arguments.get("search_query") and explicit_action == plan.action:
+                plan = plan.model_copy(
+                    update={
+                        "arguments": ConversationPlanner._normalize_tool_arguments(
+                            plan.action, message, plan.arguments,
+                        ),
+                    }
+                )
+            if behavior_signals.get("avoidance", 0) >= 80 and plan.action == "recommend_product":
+                return (
+                    plan.model_copy(
+                        update={
+                            "action": "respond_only",
+                            "should_call_tool": False,
+                            "arguments": {},
+                            "reasoning": f"{plan.reasoning} Product recommendation suppressed because the user declined products.",
+                        }
+                    ),
+                    {"blocked_tool": "recommend_product", "reason": "user_declined_products"},
+                )
+            if explicit_action is None and recommendation_readiness.get("score", 0) < 31:
+                return (
+                    plan.model_copy(
+                        update={
+                            "action": "respond_only",
+                            "should_call_tool": False,
+                            "arguments": {},
+                            "reasoning": f"{plan.reasoning} Recommendation readiness is too low for a tool call.",
+                        }
+                    ),
+                    {"blocked_tool": plan.action, "reason": "readiness_too_low"},
+                )
+            blocked, reason = cls._should_prevent_duplicate_tool(
+                action=plan.action,
+                session_state=session_state,
+                message=message,
+                readiness=recommendation_readiness,
+            )
+            if blocked:
+                return (
+                    plan.model_copy(
+                        update={
+                            "action": "respond_only",
+                            "should_call_tool": False,
+                            "arguments": {},
+                            "reasoning": f"{plan.reasoning} Duplicate recommendation prevented: {reason}.",
+                        }
+                    ),
+                    {"blocked_tool": plan.action, "reason": reason},
+                )
+
+        if plan.action == "respond_only" and explicit_action in {"recommend_product", "suggest_consultant", "book_pooja"}:
+            updated = plan.model_copy(
+                update={
+                    "action": explicit_action,
+                    "should_call_tool": True,
+                    "arguments": ConversationPlanner._normalize_tool_arguments(
+                        explicit_action,
+                        message,
+                        plan.arguments,
+                    ),
+                    "reasoning": f"{plan.reasoning} Explicit action shortcut resolved the tool intent.",
+                }
+            )
+            return updated, {"blocked_tool": None, "reason": "explicit_shortcut"}
+
+        del semantic_understanding
+        return plan, orchestration
+
     @classmethod
     def _build_compact_session_state(
         cls,
@@ -812,17 +1189,79 @@ class ChatService:
         if active_intent == "matchmaking" and matchmaking_details is None:
             pending_slots.append("matchmaking_details")
         last_tool, last_tool_summary = cls._last_tool_summary(list(context.get("tool_outputs") or []))
+        prior_state = context.get("session_state") if isinstance(context.get("session_state"), dict) else {}
+        prior_context = cls._conversation_context_snapshot(prior_state)
+        semantic_understanding = context.get("semantic_understanding") or {}
+
+        current_tool_names = [
+            output.get("tool")
+            for output in (context.get("tool_outputs") or [])
+            if isinstance(output.get("tool"), str)
+        ]
+        previous_tools = cls._merge_unique_strings(
+            list(prior_context.get("previous_tools") or []),
+            [tool for tool in current_tool_names if isinstance(tool, str)],
+            limit=8,
+        )
+
+        product_ids = [
+            str(item.get("id"))
+            for output in (context.get("tool_outputs") or [])
+            if output.get("tool") == "recommend_product"
+            for item in (output.get("items") or [])
+            if item.get("id") is not None
+        ]
+        service_ids = [
+            str(item.get("id"))
+            for output in (context.get("tool_outputs") or [])
+            if output.get("tool") == "book_pooja"
+            for key in ("home_puja_services", "temple_services")
+            for item in (output.get(key) or [])
+            if item.get("id") is not None
+        ]
+        consultant_ids = [
+            str(item.get("id"))
+            for output in (context.get("tool_outputs") or [])
+            if output.get("tool") in {"suggest_consultant", "schedule_consultation"}
+            for item in ((output.get("items") or []) if output.get("tool") == "suggest_consultant" else [output])
+            if item.get("id") is not None
+        ]
+
+        # Track pending booking from confirm_booking tool output
+        pending_booking = None
+        for output in (context.get("tool_outputs") or []):
+            if output.get("tool") == "confirm_booking":
+                pending_booking = output.get("pending_booking")
+
         state = {
             "active_intent": active_intent,
             "birth_details": effective_birth_details,
             "partial_birth_details": partial_birth_details if effective_birth_details is None else None,
             "matchmaking_details": matchmaking_details,
+            "main_concern": semantic_understanding.get("problem") or prior_state.get("main_concern"),
+            "previous_tools": previous_tools,
+            "products_shown": cls._merge_unique_strings(
+                list(prior_context.get("products_shown") or []),
+                product_ids,
+                limit=12,
+            ),
+            "services_shown": cls._merge_unique_strings(
+                list(prior_context.get("services_shown") or []),
+                service_ids,
+                limit=12,
+            ),
+            "consultation_history": cls._merge_unique_strings(
+                list(prior_context.get("consultation_history") or []),
+                consultant_ids,
+                limit=8,
+            ),
             "pending_slots": pending_slots,
+            "pending_booking": pending_booking,
             "last_tool": last_tool,
             "last_tool_summary": last_tool_summary,
             "last_user_goal": context.get("message"),
             "last_reply_summary": reply,
-            "last_updated_at": datetime.utcnow().isoformat(),
+            "last_updated_at": datetime.now(timezone.utc).isoformat(),
             "partial_reply": partial,
         }
         return state
@@ -832,6 +1271,9 @@ class ChatService:
         if not session_state:
             return None
         lines: list[str] = []
+        main_concern = session_state.get("main_concern")
+        if isinstance(main_concern, str) and main_concern:
+            lines.append(f"Main concern: {main_concern}")
         active_intent = session_state.get("active_intent")
         if isinstance(active_intent, str) and active_intent:
             lines.append(f"Active intent: {active_intent}")
@@ -859,6 +1301,11 @@ class ChatService:
         matchmaking_summary = cls._summarize_matchmaking_details(matchmaking_details)
         if matchmaking_summary:
             lines.append("Matchmaking context: " + matchmaking_summary)
+        pending_booking = session_state.get("pending_booking")
+        if isinstance(pending_booking, dict) and pending_booking:
+            pb_name = pending_booking.get("service_name", "service")
+            pb_type = pending_booking.get("service_type", "puja")
+            lines.append(f"Pending booking: {pb_name} ({pb_type}) — awaiting user confirmation")
         last_tool = session_state.get("last_tool")
         last_tool_summary = session_state.get("last_tool_summary")
         if isinstance(last_tool, str) and last_tool:
@@ -869,6 +1316,9 @@ class ChatService:
         last_user_goal = session_state.get("last_user_goal")
         if isinstance(last_user_goal, str) and last_user_goal:
             lines.append(f"Last user goal: {last_user_goal}")
+        previous_tools = session_state.get("previous_tools")
+        if isinstance(previous_tools, list) and previous_tools:
+            lines.append("Previous tools: " + ", ".join(str(tool) for tool in previous_tools[-3:]))
         if not lines:
             return None
         return "Compact session state:\n" + "\n".join(f"- {line}" for line in lines)
@@ -999,6 +1449,7 @@ class ChatService:
             "text": reply,
             "metadata": {
                 "cards": build_cards(tool_outputs),
+                "normalized_tools": normalize_tool_outputs(tool_outputs),
                 "intent": plan.action,
                 "route": route_decision.route,
                 "risk_level": route_decision.risk_level,
@@ -1242,13 +1693,16 @@ class ChatService:
         *,
         search_query: str | None = None,
         soft_recommendation: bool = False,
+        show_multiple: bool = False,
     ) -> dict[str, Any] | None:
         if not products:
             return None
 
+        # Show 1 best-match product by default; multiple only when explicitly asked
+        limit = 3 if show_multiple else 1
         items: list[dict[str, Any]] = []
         names: list[str] = []
-        for product in products[:3]:
+        for product in products[:limit]:
             name = str(product.get("name") or "Product")
             names.append(name)
             primary_media = product.get("primary_media") or {}
@@ -1325,6 +1779,17 @@ class ChatService:
                 return True
         return False
 
+    @staticmethod
+    def _policy_blocks_product_recommendation(matches: list[dict[str, Any]]) -> bool:
+        for match in matches:
+            metadata = match.get("metadata") or {}
+            allowed_actions = metadata.get("allowed_actions") or []
+            if not isinstance(allowed_actions, list):
+                continue
+            if "no_tool" in {str(action) for action in allowed_actions}:
+                return True
+        return False
+
     PLANET_REMEDY_MAP: dict[str, dict[str, str]] = {
         "sun": {"query": "1 mukhi rudraksha", "reason": "strengthen Sun energy"},
         "moon": {"query": "2 mukhi rudraksha", "reason": "emotional balance and Moon strength"},
@@ -1382,15 +1847,25 @@ class ChatService:
                     return mapping["query"]
 
         if tokens & {"saturn", "shani", "delay", "stuck", "obstacle", "obstacles"}:
-            return "rudraksha career"
+            return "7 mukhi rudraksha"
         if tokens & {"stress", "anxiety", "peace", "sleep", "restless", "moon", "calm"}:
-            return "rudraksha peace"
-        if tokens & {"rahu", "ketu", "fear", "confusion", "negative"}:
-            return "bracelet protection"
+            return "2 mukhi rudraksha"
+        if tokens & {"rahu", "fear", "confusion", "negative"}:
+            return "8 mukhi rudraksha"
+        if tokens & {"ketu", "detachment", "karma"}:
+            return "9 mukhi rudraksha"
+        if tokens & {"career", "job", "promotion", "wisdom", "jupiter"}:
+            return "5 mukhi rudraksha"
         if tokens & {"spiritual", "spirituality", "meditation", "mantra"}:
-            return "rudraksha mala"
+            return "5 mukhi rudraksha mala"
         if tokens & (cls.RELATIONSHIP_TOKENS | {"venus", "harmony"}):
-            return "rudraksha relationship"
+            return "6 mukhi rudraksha"
+        if tokens & {"anger", "energy", "mars", "mangal"}:
+            return "3 mukhi rudraksha"
+        if tokens & {"communication", "memory", "exam", "mercury", "studies"}:
+            return "4 mukhi rudraksha"
+        if tokens & {"confidence", "authority", "sun", "surya"}:
+            return "1 mukhi rudraksha"
         return None
 
     @classmethod
@@ -1411,7 +1886,7 @@ class ChatService:
             return {"allowed": False, "reason": "user_declined_products", "query": None}
         if cls._message_requests_single_step(message):
             return {"allowed": False, "reason": "single_step_requested", "query": None}
-        if not cls._policy_allows_product_recommendation(retrieval_policy_matches):
+        if cls._policy_blocks_product_recommendation(retrieval_policy_matches):
             return {"allowed": False, "reason": "policy_disallows_product", "query": None}
 
         query = cls._infer_soft_product_query(message=message, kundali_summary=kundali_summary, chart_context=chart_context)
@@ -1469,6 +1944,7 @@ class ChatService:
         soft_recommendation: bool,
         afflicted_planets: list[str] | None = None,
         current_dasha: str | None = None,
+        show_multiple: bool = False,
     ) -> dict[str, Any] | None:
         sanitized_query = enrich_product_query(
             search_query,
@@ -1479,43 +1955,58 @@ class ChatService:
         if all(token in generic_terms for token in sanitized_query.split()):
             sanitized_query = "rudraksha"
 
-        product_results = self._get_cached_products(sanitized_query)
-        if product_results is None:
-            product_results = await self._safe_tool_result(
-                self.core_service_client.search_products(sanitized_query),
-                timeout_seconds=self.settings.TOOL_TIMEOUT_SECONDS,
-                default=[],
-                tool_name="search_products",
-            )
-            if product_results:
-                self._set_cached_products(sanitized_query, product_results)
+        product_results: list[dict[str, Any]] = []
+        chosen_query = sanitized_query
+        limit = 3 if show_multiple else 3  # fetch 3 candidates, display logic trims later
 
-        if not product_results and " " in sanitized_query:
-            product_cores = {"rudraksha", "bracelet", "mala", "mukhi"}
-            fallback_token = next(
-                (token for token in sanitized_query.split() if token in product_cores),
-                "rudraksha",
-            )
-            product_results = self._get_cached_products(fallback_token)
-            if product_results is None:
-                product_results = await self._safe_tool_result(
-                    self.core_service_client.search_products(fallback_token),
-                    timeout_seconds=self.settings.TOOL_TIMEOUT_SECONDS,
-                    default=[],
-                    tool_name="search_products_fallback",
+        # ── Strategy 1: Local catalog index (smart matching, no network) ──
+        await catalog_index.ensure_fresh(self.core_service_client)
+        if catalog_index.is_loaded:
+            # Try enriched query first, then original query
+            local_results = catalog_index.match_products(sanitized_query, limit=limit)
+            if not local_results and sanitized_query != search_query:
+                local_results = catalog_index.match_products(search_query, limit=limit)
+            if local_results:
+                product_results = local_results
+                chosen_query = sanitized_query
+                logger.debug(
+                    "Product matched via local catalog index: query='%s', results=%d",
+                    sanitized_query, len(local_results),
                 )
-                if product_results:
-                    self._set_cached_products(fallback_token, product_results)
+
+        # ── Strategy 2: Core-service search fallback (network call) ──
+        if not product_results:
+            query_fallbacks = build_product_query_fallbacks(
+                sanitized_query,
+                afflicted_planets=afflicted_planets,
+                current_dasha=current_dasha,
+            )
+            for index, candidate_query in enumerate(query_fallbacks):
+                cached = self._get_cached_products(candidate_query)
+                if cached is None:
+                    cached = await self._safe_tool_result(
+                        self.core_service_client.search_products(candidate_query),
+                        timeout_seconds=self.settings.TOOL_TIMEOUT_SECONDS,
+                        default=[],
+                        tool_name="search_products" if index == 0 else "search_products_fallback",
+                    )
+                    if cached:
+                        self._set_cached_products(candidate_query, cached)
+                if cached:
+                    product_results = cached
+                    chosen_query = candidate_query
+                    break
         product_output = self._build_product_tool_output(
             product_results,
             kundali_summary=kundali_summary,
-            search_query=sanitized_query,
+            search_query=chosen_query,
             soft_recommendation=soft_recommendation,
+            show_multiple=show_multiple,
         )
         if product_output is not None:
             return product_output
         if include_empty:
-            return self._build_empty_product_tool_output(sanitized_query)
+            return self._build_empty_product_tool_output(chosen_query)
         return None
 
     @classmethod
@@ -1625,13 +2116,15 @@ class ChatService:
     def _build_consultant_tool_output(
         consultants: list[dict[str, Any]],
         kundali_summary: str | None = None,
+        show_multiple: bool = False,
     ) -> dict[str, Any] | None:
         if not consultants:
             return None
 
+        limit = 3 if show_multiple else 1
         items: list[dict[str, Any]] = []
         names: list[str] = []
-        for consultant in consultants[:3]:
+        for consultant in consultants[:limit]:
             name = str(consultant.get("name") or "Pandit")
             names.append(name)
             items.append(
@@ -1718,10 +2211,12 @@ class ChatService:
         home_puja_services: list[dict[str, Any]],
         temple_services: list[dict[str, Any]],
         pandits: list[dict[str, Any]],
+        show_multiple: bool = False,
     ) -> dict[str, Any] | None:
         if not home_puja_services and not temple_services and not pandits:
             return None
 
+        limit = 3 if show_multiple else 1
         home_items = [
             {
                 "id": str(service.get("id", "")),
@@ -1732,7 +2227,7 @@ class ChatService:
                 "tiers": service.get("tiers"),
                 "images": service.get("images"),
             }
-            for service in home_puja_services[:3]
+            for service in home_puja_services[:limit]
         ]
         temple_items = [
             {
@@ -1765,7 +2260,7 @@ class ChatService:
                 "city": pandit.get("city"),
                 "state": pandit.get("state"),
             }
-            for pandit in pandits[:3]
+            for pandit in pandits[:limit]
         ]
 
         summary_parts: list[str] = []
@@ -2361,8 +2856,6 @@ class ChatService:
         if not tokens:
             return False
         if tokens & cls.KUNDALI_TOKENS:
-            return True
-        if tokens & cls.LIFE_GUIDANCE_TOKENS:
             return True
         return len(tokens) <= 6 and bool(tokens & cls.KUNDALI_FOLLOWUP_TOKENS)
 
@@ -3156,7 +3649,7 @@ class ChatService:
         session_state = _get_cached_session_context(session_id)
         if session_state is None:
             session_state = await asyncio.to_thread(
-                self.memory_service.repository.get_session_state,
+                self.memory_service.get_session_state,
                 session_id,
             ) or {}
             if session_state:
@@ -3256,6 +3749,11 @@ class ChatService:
                 current_user.user_id,
                 current_user,
             )
+        # Fallback: load from local DB if core-service didn't return anything
+        if effective_birth_details is None and current_user is not None:
+            effective_birth_details = self.user_repository.get_birth_details(
+                current_user.user_id,
+            )
         # Persist birth details: save to session cache + core-service
         if effective_birth_details is not None:
             _set_cached_birth_details(session_id, effective_birth_details)
@@ -3272,6 +3770,15 @@ class ChatService:
                 )
                 if saved_birth_details is not None:
                     effective_birth_details = saved_birth_details
+                # Dual-write: persist locally so daily insights / notifications
+                # can load birth details without hitting the core-service.
+                try:
+                    self.user_repository.save_birth_details(
+                        current_user.user_id,
+                        effective_birth_details,
+                    )
+                except Exception:
+                    logger.debug("local_birth_details_save_failed")
         message = sanitize_user_input(message)
         pre_guardrail = pre_scope_guardrail(message)
         # Lightweight initial route: guardrail check + always defer to ToolCallPlanner
@@ -3319,6 +3826,38 @@ class ChatService:
             metadata_json = self._safe_json_dumps({"user_id": current_user.user_id, "role": current_user.role})
         internal_user_id = self._resolve_internal_user_id(current_user)
         emotion = detect_emotion(message)
+        semantic_understanding = self._semantic_understanding(
+            message=message,
+            emotion_label=emotion.label,
+            session_state=session_state,
+        )
+        conversation_context = self._conversation_context_snapshot(session_state)
+        behavior_signals = self._behavior_signals(
+            message=message,
+            semantic_understanding=semantic_understanding,
+            session_state=session_state,
+        )
+        recommendation_readiness = self._recommendation_readiness(
+            semantic_understanding=semantic_understanding,
+            conversation_context=conversation_context,
+            behavior_signals=behavior_signals,
+            recent_messages=recent_messages,
+        )
+        explicit_tool_action = ConversationPlanner.explicit_tool_action(message)
+
+        if (
+            pre_guardrail.allowed
+            and route_decision.route == "FAST_CHAT"
+            and explicit_tool_action in {"recommend_product", "suggest_consultant", "book_pooja"}
+        ):
+            route_decision = ChatRouteDecision(
+                route="TOOL_FLOW",
+                intent=explicit_tool_action,
+                confidence=0.96,
+                risk_level="low",
+                reason="explicit_action_shortcut",
+                should_call_tool=True,
+            )
 
         if birth_details_followup and effective_birth_details is not None:
             route_decision = ChatRouteDecision(
@@ -3364,6 +3903,11 @@ class ChatService:
                 "needs_birth_details": needs_birth_details,
                 "matchmaking_details": matchmaking_details,
                 "current_user": current_user,
+                "semantic_understanding": semantic_understanding,
+                "conversation_context": conversation_context,
+                "behavior_signals": behavior_signals,
+                "recommendation_readiness": recommendation_readiness,
+                "explicit_tool_action": explicit_tool_action,
             }
 
         plan = self._plan_from_route(route_decision)
@@ -3431,6 +3975,11 @@ class ChatService:
             "needs_birth_details": needs_birth_details,
             "matchmaking_details": matchmaking_details,
             "current_user": current_user,
+            "semantic_understanding": semantic_understanding,
+            "conversation_context": conversation_context,
+            "behavior_signals": behavior_signals,
+            "recommendation_readiness": recommendation_readiness,
+            "explicit_tool_action": explicit_tool_action,
         }
 
     async def _complete_reply_context(
@@ -3469,6 +4018,19 @@ class ChatService:
                 user_id=internal_user_id,
             ),
         ]
+        behavior_task_index: int | None = None
+        behavior_service = getattr(self, "energy_flow_service", None)
+        if behavior_service is not None:
+            behavior_task_index = len(parallel_tasks)
+            parallel_tasks.append(
+                asyncio.to_thread(
+                    behavior_service.behavior_prompt_context,
+                    session_id=session_id,
+                    user_id=internal_user_id,
+                    current_message=message,
+                    current_emotion=context["emotion"].label,
+                )
+            )
         rag_task_index: int | None = None
         chart_context_task_index: int | None = None
         planner_task_index: int | None = None
@@ -3496,11 +4058,14 @@ class ChatService:
                     has_birth_details=effective_birth_details is not None,
                     has_matchmaking_details=matchmaking_details is not None,
                     is_authenticated=current_user is not None,
+                    recent_messages=compact_recent_messages,
+                    session_state=compact_session_context,
                 )
             )
 
         results = await asyncio.gather(*parallel_tasks)
         long_term_context = results[0]
+        behavior_summary = results[behavior_task_index] if behavior_task_index is not None else None
         rag_payload = results[rag_task_index] if rag_task_index is not None else empty_rag_payload
         rag_chart_context: dict[str, Any] | None = None
         precomputed_kundali_chart: dict[str, Any] | None = None
@@ -3568,6 +4133,35 @@ class ChatService:
                     planner_query=planner_query,
                     chart_context=rag_chart_context,
                 )
+
+        plan, orchestration = self._orchestrate_plan(
+            plan=plan,
+            message=message,
+            session_state=context.get("session_state"),
+            semantic_understanding=context.get("semantic_understanding") or {},
+            behavior_signals=context.get("behavior_signals") or {},
+            recommendation_readiness=context.get("recommendation_readiness") or {},
+            birth_details=effective_birth_details,
+            matchmaking_details=matchmaking_details,
+        )
+        route_decision = self._route_decision_from_plan(route_decision, plan)
+        tool_guardrail = self._tool_guardrail_decision(
+            plan,
+            message=message,
+            birth_details=effective_birth_details,
+            matchmaking_details=matchmaking_details,
+        )
+        if route_decision.route != "TOOL_FLOW":
+            tool_guardrail = {"allowed": False, "reason": "route_not_tool_flow"}
+        plan = self._fallback_plan_for_threshold_rejection(plan, tool_guardrail)
+        tool_execution_allowed = bool(tool_guardrail.get("allowed"))
+        route = pick_model_route(plan.model_copy(update={"should_call_tool": tool_execution_allowed}))
+        context["plan"] = plan
+        context["tool_guardrail"] = tool_guardrail
+        context["tool_execution_allowed"] = tool_execution_allowed
+        context["route"] = route
+        context["route_decision"] = route_decision
+
         retrieval_matches = list(rag_payload.get("chunks") or [])
         retrieval_knowledge_matches = list(rag_payload.get("knowledge_chunks") or [])
         retrieval_policy_matches = list(rag_payload.get("policy_chunks") or [])
@@ -3577,7 +4171,12 @@ class ChatService:
                 "eligible": False,
                 "reason": "not_evaluated",
                 "query": None,
-            }
+            },
+            "semantic_understanding": dict(context.get("semantic_understanding") or {}),
+            "conversation_context": dict(context.get("conversation_context") or {}),
+            "behavior_signals": dict(context.get("behavior_signals") or {}),
+            "readiness": dict(context.get("recommendation_readiness") or {}),
+            "orchestration": orchestration,
         }
 
         kundali_summary: str | None = None
@@ -3635,10 +4234,17 @@ class ChatService:
                     tool_name="list_public_pandits",
                 ),
             )
+            _msg_lower_b = message.lower()
+            _wants_multiple_b = any(kw in _msg_lower_b for kw in (
+                "more option", "other pooja", "other puja", "alternatives",
+                "show more", "all option", "multiple", "compare", "which one",
+                "list", "options available", "what all",
+            ))
             booking_output = self._build_booking_tool_output(
                 home_puja_services,
                 temple_services,
                 public_pandits,
+                show_multiple=_wants_multiple_b,
             )
             if booking_output is not None:
                 tool_outputs.append(booking_output)
@@ -3647,6 +4253,12 @@ class ChatService:
         if tool_execution_allowed and plan.action == "recommend_product" and search_query is not None:
             _afflicted = self._identify_afflicted_planets(rag_chart_context) if rag_chart_context else None
             _cur_dasha = (rag_chart_context or {}).get("current_mahadasha")
+            _msg_lower = message.lower()
+            _wants_multiple = any(kw in _msg_lower for kw in (
+                "more option", "more product", "other option", "alternatives",
+                "show more", "all option", "multiple", "compare", "which one",
+                "list", "options available", "what all",
+            ))
             product_output = await self._lookup_product_tool_output(
                 search_query=search_query,
                 kundali_summary=kundali_summary,
@@ -3654,10 +4266,17 @@ class ChatService:
                 soft_recommendation=False,
                 afflicted_planets=_afflicted,
                 current_dasha=_cur_dasha,
+                show_multiple=_wants_multiple,
             )
             if product_output is not None:
                 tool_outputs.append(product_output)
         if tool_execution_allowed and plan.action == "suggest_consultant" and search_query is not None:
+            _msg_lower = message.lower() if not isinstance(locals().get("_msg_lower"), str) else _msg_lower
+            _wants_multiple_c = any(kw in _msg_lower for kw in (
+                "more option", "other pandit", "other consultant", "alternatives",
+                "show more", "all option", "multiple", "compare", "which one",
+                "list", "options available", "what all",
+            ))
             consultant_results = await self._safe_tool_result(
                 self._find_consultant_results(
                     search_query,
@@ -3670,11 +4289,70 @@ class ChatService:
             consultant_output = self._build_consultant_tool_output(
                 consultant_results,
                 kundali_summary=kundali_summary,
+                show_multiple=_wants_multiple_c,
             )
             if consultant_output is not None:
                 tool_outputs.append(consultant_output)
             else:
                 tool_outputs.append(self._build_empty_consultant_tool_output(search_query))
+        if tool_execution_allowed and plan.action == "confirm_booking":
+            from src.tools.confirm_booking import execute_confirm_booking
+
+            _args = plan.arguments
+            _session_state = context.get("session_state") or {}
+            _pending = _session_state.get("pending_booking")
+            booking_output = await self._safe_tool_result(
+                execute_confirm_booking(
+                    core_service=self.core_service_client,
+                    current_user=current_user,
+                    service_id=_args.get("service_id", ""),
+                    service_type=_args.get("service_type", "home_puja"),
+                    tier_id=_args.get("tier_id"),
+                    service_name=_args.get("service_name"),
+                    pending_booking=_pending,
+                ),
+                timeout_seconds=self.settings.TOOL_TIMEOUT_SECONDS,
+                default=None,
+                tool_name="confirm_booking",
+            )
+            if booking_output is not None:
+                tool_outputs.append(booking_output)
+        if tool_execution_allowed and plan.action == "schedule_consultation":
+            from src.tools.schedule_consultation import execute_schedule_consultation
+
+            _sc_args = plan.arguments
+            consultation_output = await self._safe_tool_result(
+                execute_schedule_consultation(
+                    core_service=self.core_service_client,
+                    current_user=current_user,
+                    consultant_id=_sc_args.get("consultant_id", ""),
+                    consultant_name=_sc_args.get("consultant_name"),
+                    preferred_date=_sc_args.get("preferred_date"),
+                    preferred_time=_sc_args.get("preferred_time"),
+                    concern=_sc_args.get("concern"),
+                ),
+                timeout_seconds=self.settings.TOOL_TIMEOUT_SECONDS,
+                default=None,
+                tool_name="schedule_consultation",
+            )
+            if consultation_output is not None:
+                tool_outputs.append(consultation_output)
+        if tool_execution_allowed and plan.action == "check_booking":
+            from src.tools.check_booking import execute_check_booking
+
+            _cb_args = plan.arguments
+            booking_history_output = await self._safe_tool_result(
+                execute_check_booking(
+                    core_service=self.core_service_client,
+                    current_user=current_user,
+                    status_filter=_cb_args.get("status_filter"),
+                ),
+                timeout_seconds=self.settings.TOOL_TIMEOUT_SECONDS,
+                default=None,
+                tool_name="check_booking",
+            )
+            if booking_history_output is not None:
+                tool_outputs.append(booking_history_output)
         soft_product_decision = self._soft_product_decision(
             message=message,
             plan=plan,
@@ -3743,6 +4421,7 @@ class ChatService:
                 transit_data=transit_data,
                 predictions=predictive_insights,
             ),
+            behavior_summary=behavior_summary if isinstance(behavior_summary, str) and behavior_summary.strip() else None,
         )
         messages = [{"role": "system", "content": persona_prompt}]
         messages.append(
@@ -3766,6 +4445,14 @@ class ChatService:
         if compact_session_context is not None:
             messages.append({"role": "system", "content": compact_session_context})
         messages.extend(compact_recent_messages)
+        messages.append({
+            "role": "system",
+            "content": (
+                "IMPORTANT: Reply in 2-4 short sentences only. No bullet points, no lists, no headings. "
+                "Sound like a pandit chatting, not writing an article. Max 60 words. "
+                "Use 2-3 emojis naturally (🪐 ✨ 🌙 🔮 📿 🙏 💫)."
+            ),
+        })
         messages.append({"role": "user", "content": message})
 
         enriched = dict(context)
@@ -3780,6 +4467,7 @@ class ChatService:
                 "retrieval_policy_matches": retrieval_policy_matches,
                 "retrieval_metadata": retrieval_metadata,
                 "recommendation_context": recommendation_context,
+                "behavior_summary": behavior_summary,
                 "kundali_chart": kundali_chart,
                 "kundali_summary": kundali_summary,
                 "matchmaking_result": matchmaking_result,
@@ -3863,7 +4551,7 @@ class ChatService:
         if route_decision.route == "BLOCKED":
             return
 
-        self.memory_service.repository.add_turn(
+        user_row = self.memory_service.repository.add_turn(
             context["session_id"],
             "user",
             context["message"],
@@ -3902,11 +4590,28 @@ class ChatService:
             partial=partial,
         )
         _set_cached_session_context(context["session_id"], compact_session_state)
-        self.memory_service.repository.save_session_state(
+        self.memory_service.save_session_state(
             context["session_id"],
             compact_session_state,
             user_id=context.get("internal_user_id"),
         )
+        energy_flow_service = getattr(self, "energy_flow_service", None)
+        emotion_label = getattr(context.get("emotion"), "label", None)
+        if energy_flow_service is not None and isinstance(emotion_label, str):
+            try:
+                energy_flow_service.track_message_signal(
+                    session_id=context["session_id"],
+                    message=context["message"],
+                    emotion_label=emotion_label,
+                    user_id=context.get("internal_user_id"),
+                    occurred_at=user_row.created_at,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "energy_flow_tracking_failed | session=%s | error=%s",
+                    context["session_id"],
+                    exc,
+                )
 
     async def _background_memory_extraction(
         self,
@@ -3987,6 +4692,7 @@ class ChatService:
                         reply = await self.groq_client.generate(
                             context["messages"],
                             model=route.model,
+                            max_tokens=512,
                             session_id=session_id,
                             user_id=current_user.user_id if current_user is not None else None,
                             trace_metadata=self._llm_trace_metadata(context),
@@ -4281,6 +4987,7 @@ class ChatService:
                         async for delta in self.groq_client.stream_generate(
                             context["messages"],
                             model=route.model,
+                            max_tokens=512,
                             session_id=session_id,
                             user_id=current_user.user_id if current_user is not None else None,
                             trace_metadata=self._llm_trace_metadata(context),

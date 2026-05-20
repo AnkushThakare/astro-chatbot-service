@@ -60,6 +60,11 @@ def test_prepare_base_reply_context_uses_core_service_birth_details() -> None:
             raise AssertionError("save_user_birth_details should not be called")
 
     service.core_service_client = _CoreStub()
+    service.user_repository = SimpleNamespace(
+        get_birth_details=lambda ext_id: None,
+        save_birth_details=lambda ext_id, details: True,
+        get_or_create=lambda ext_id: SimpleNamespace(id=1),
+    )
 
     context = asyncio.run(
         service._prepare_base_reply_context(
@@ -71,7 +76,9 @@ def test_prepare_base_reply_context_uses_core_service_birth_details() -> None:
 
     assert context["effective_birth_details"] is not None
     assert context["effective_birth_details"]["latitude"] == 12.9716
-    assert context["route_decision"].intent == "show_kundali"
+    # Route decision is initially respond_only (planner deferred); actual
+    # intent is resolved later in _complete_reply_context by the planner.
+    assert context["route_decision"].needs_planner is True
     assert context["needs_birth_details"] is False
 
 
@@ -106,8 +113,12 @@ def test_prepare_base_reply_context_saves_birth_details_followup_to_core_service
             del current_user
             return payload
 
-    async def _infer_birth_details(message: str):  # noqa: ANN202
-        del message
+        async def save_user_birth_profile(self, user_id: str, payload: dict, current_user: AuthenticatedUser):  # noqa: ANN202
+            del user_id, payload, current_user
+            return None
+
+    async def _infer_birth_details(parts):  # noqa: ANN001, ANN202
+        del parts
         return {
             "name": None,
             "latitude": 18.5204,
@@ -117,7 +128,12 @@ def test_prepare_base_reply_context_saves_birth_details_followup_to_core_service
         }
 
     service.core_service_client = _CoreStub()
-    service._infer_birth_details_from_message = _infer_birth_details  # type: ignore[method-assign]
+    service._infer_birth_details_from_parts = _infer_birth_details  # type: ignore[method-assign]
+    service.user_repository = SimpleNamespace(
+        get_birth_details=lambda ext_id: None,
+        save_birth_details=lambda ext_id, details: True,
+        get_or_create=lambda ext_id: SimpleNamespace(id=1),
+    )
 
     context = asyncio.run(
         service._prepare_base_reply_context(
@@ -210,6 +226,11 @@ def test_prepare_base_reply_context_keeps_birth_slot_clarification_from_session_
             return None
 
     service.core_service_client = _CoreStub()
+    service.user_repository = SimpleNamespace(
+        get_birth_details=lambda ext_id: None,
+        save_birth_details=lambda ext_id, details: True,
+        get_or_create=lambda ext_id: SimpleNamespace(id=1),
+    )
 
     context = asyncio.run(
         service._prepare_base_reply_context(
@@ -293,7 +314,8 @@ def test_persist_chat_turns_records_metadata_fields() -> None:
 
     service._persist_chat_turns(context, "You can speak with a pandit directly.", metadata, partial=True)
 
-    assert len(captured) == 2
+    # captured contains: user turn, assistant turn, and save_session_state call
+    assert len(captured) == 3
     assistant_turn = captured[1]
     assert assistant_turn["role"] == "assistant"
     assert assistant_turn["prompt_versions"] == metadata["prompt_versions"]

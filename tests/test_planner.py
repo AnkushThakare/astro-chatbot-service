@@ -344,3 +344,7 @@ def test_planner_prefers_structured_consultant_query_for_relationship_request() 
     assert result.action == "suggest_consultant"
     assert result.should_call_tool is True
     assert result.arguments["search_query"] == "relationship astrologer"
+
+
+def test_explicit_tool_action_exposes_shortcut_for_direct_product_request() -> None:
+    assert ConversationPlanner.explicit_tool_action("Show products for Saturn issues") == "recommend_product"

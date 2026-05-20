@@ -24,6 +24,7 @@ def build_persona_prompt(
     transit_summary: str | None = None,
     prediction_summary: str | None = None,
     pattern_summary: str | None = None,
+    behavior_summary: str | None = None,
 ) -> str:
     sections = [load_persona_prompt()]
     if long_term_context:
@@ -62,6 +63,11 @@ def build_persona_prompt(
         sections.append(
             "Recurring personal pattern read (use this to make the chatbot feel eerily specific in a grounded way):\n"
             + pattern_summary
+        )
+    if behavior_summary:
+        sections.append(
+            "Behavioral energy flow read (use this only when it sharpens relevance, never as therapy language):\n"
+            + behavior_summary
         )
     sections.append("Retrieved knowledge:\n" + retrieval_context)
     if retrieval_policy_context:

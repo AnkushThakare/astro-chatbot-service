@@ -230,8 +230,10 @@ def classify_route(
 
 
 def pick_model_route(plan: PlannerResult) -> ModelRoute:
+    provider = settings.RESPONSE_LLM_PROVIDER
+    model = settings.RESPONSE_LLM_MODEL or settings.GROQ_MODEL
     if plan.action in {"respond_only", "ask_clarification"}:
-        return ModelRoute(provider="groq", model=settings.GROQ_MODEL, reasoning_profile="fast-answer")
+        return ModelRoute(provider=provider, model=model, reasoning_profile="fast-answer")
     if plan.action in {
         "show_kundali",
         "matchmaking",
@@ -239,5 +241,5 @@ def pick_model_route(plan: PlannerResult) -> ModelRoute:
         "recommend_product",
         "suggest_consultant",
     } and plan.should_call_tool:
-        return ModelRoute(provider="groq", model=settings.GROQ_MODEL, reasoning_profile="tool-aware")
-    return ModelRoute(provider="groq", model=settings.GROQ_MODEL, reasoning_profile="fallback")
+        return ModelRoute(provider=provider, model=model, reasoning_profile="tool-aware")
+    return ModelRoute(provider=provider, model=model, reasoning_profile="fallback")

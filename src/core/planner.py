@@ -14,12 +14,24 @@ from src.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+_PLANNER_MSG_MAX_CHARS = 300
+
+
+def _truncate_for_planner(content: str) -> str:
+    if len(content) <= _PLANNER_MSG_MAX_CHARS:
+        return content
+    return content[:_PLANNER_MSG_MAX_CHARS].rstrip() + "..."
+
+
 TOOL_ACTIONS = {
     "show_kundali",
     "matchmaking",
     "book_pooja",
     "recommend_product",
     "suggest_consultant",
+    "confirm_booking",
+    "schedule_consultation",
+    "check_booking",
 }
 SEARCH_QUERY_ACTIONS = {"book_pooja", "recommend_product", "suggest_consultant"}
 LANGUAGE_TOKENS = {
@@ -109,8 +121,11 @@ PlannerAction = Literal[
     "show_kundali",
     "matchmaking",
     "book_pooja",
+    "confirm_booking",
     "recommend_product",
     "suggest_consultant",
+    "schedule_consultation",
+    "check_booking",
     "ask_clarification",
 ]
 
@@ -316,6 +331,11 @@ class ConversationPlanner:
         return None
 
     @classmethod
+    def explicit_tool_action(cls, message: str) -> PlannerAction | None:
+        """Expose explicit action shortcuts for orchestration layers."""
+        return cls._infer_explicit_action(message)
+
+    @classmethod
     def _normalized_query_for_action(cls, action: PlannerAction, message: str) -> str | None:
         if action == "recommend_product":
             return cls._extract_product_query(message)
@@ -323,7 +343,33 @@ class ConversationPlanner:
             return cls._extract_consultant_query(message)
         if action == "book_pooja":
             return cls._extract_booking_query(message)
+        # confirm_booking and schedule_consultation don't need a search query —
+        # they operate on IDs from the previous suggestion.
         return None
+
+    @classmethod
+    def _normalize_tool_arguments(
+        cls,
+        action: PlannerAction,
+        message: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(arguments)
+        if action in SEARCH_QUERY_ACTIONS:
+            query = normalized.get("search_query")
+            cleaned_query = cls._normalize_search_query(query) if isinstance(query, str) else None
+            fallback_query = cls._normalized_query_for_action(action, message)
+            # Prefer the LLM-generated query — it has catalog awareness and
+            # planetary mapping knowledge. Only fall back to keyword extraction
+            # when the LLM didn't provide a query.
+            final_query = cleaned_query or fallback_query
+            if action == "suggest_consultant" and not cleaned_query and fallback_query:
+                final_query = fallback_query
+            if final_query:
+                normalized["search_query"] = final_query
+            else:
+                normalized.pop("search_query", None)
+        return normalized
 
     @classmethod
     def _normalize_plan(
@@ -366,18 +412,13 @@ class ConversationPlanner:
             normalized.should_call_tool = True
 
         if normalized.action in SEARCH_QUERY_ACTIONS:
-            query = normalized.arguments.get("search_query")
-            query = query if isinstance(query, str) else ""
-            cleaned_query = cls._normalize_search_query(query) if query else None
-            fallback_query = cls._normalized_query_for_action(normalized.action, message)
-            final_query = cleaned_query or fallback_query
-            if normalized.action == "suggest_consultant" and fallback_query:
-                final_query = fallback_query
-            elif cleaned_query and fallback_query and len(cleaned_query.split()) > len(fallback_query.split()):
-                final_query = fallback_query
-
+            normalized.arguments = cls._normalize_tool_arguments(
+                normalized.action,
+                message,
+                normalized.arguments,
+            )
+            final_query = normalized.arguments.get("search_query")
             if final_query:
-                normalized.arguments["search_query"] = final_query
                 if explicit_action == normalized.action:
                     normalized.should_call_tool = True
             else:
@@ -399,23 +440,35 @@ class ConversationPlanner:
         has_birth_details: bool,
         has_matchmaking_details: bool,
         is_authenticated: bool,
+        recent_messages: list[dict[str, str]] | None = None,
+        session_state: str | None = None,
     ) -> list[dict[str, str]]:
         context = (
             f"has_birth_details={str(has_birth_details).lower()}\n"
             f"has_matchmaking_details={str(has_matchmaking_details).lower()}\n"
             f"is_authenticated={str(is_authenticated).lower()}"
         )
-        return [
+        if session_state:
+            context += f"\n{session_state}"
+
+        msgs: list[dict[str, str]] = [
             {"role": "system", "content": self.planner_prompt()},
-            {
-                "role": "user",
-                "content": (
-                    "Plan the next action for this user message.\n"
-                    f"Context:\n{context}\n\n"
-                    f"User message:\n{message}"
-                ),
-            },
         ]
+        if recent_messages:
+            for turn in recent_messages:
+                role = turn.get("role", "user")
+                content = turn.get("content", "")
+                if role in ("user", "assistant") and content:
+                    msgs.append({"role": role, "content": _truncate_for_planner(content)})
+        msgs.append({
+            "role": "user",
+            "content": (
+                "Plan the next action for this user message.\n"
+                f"Context:\n{context}\n\n"
+                f"User message:\n{message}"
+            ),
+        })
+        return msgs
 
     async def _generate_raw_plan(
         self,
@@ -424,12 +477,16 @@ class ConversationPlanner:
         has_birth_details: bool,
         has_matchmaking_details: bool,
         is_authenticated: bool,
+        recent_messages: list[dict[str, str]] | None = None,
+        session_state: str | None = None,
     ) -> str:
         messages = self._build_messages(
             message=message,
             has_birth_details=has_birth_details,
             has_matchmaking_details=has_matchmaking_details,
             is_authenticated=is_authenticated,
+            recent_messages=recent_messages,
+            session_state=session_state,
         )
         return await self.groq_client.generate(
             messages,
@@ -445,6 +502,8 @@ class ConversationPlanner:
         has_birth_details: bool,
         has_matchmaking_details: bool,
         is_authenticated: bool,
+        recent_messages: list[dict[str, str]] | None = None,
+        session_state: str | None = None,
     ) -> PlannerResult:
         if not self.groq_client.is_configured:
             return self.fallback_result("Planner model is unavailable because GROQ_API_KEY is not configured.")
@@ -456,6 +515,8 @@ class ConversationPlanner:
                     has_birth_details=has_birth_details,
                     has_matchmaking_details=has_matchmaking_details,
                     is_authenticated=is_authenticated,
+                    recent_messages=recent_messages,
+                    session_state=session_state,
                 )
                 # Strip markdown fences if LLM wraps JSON in ```json ... ```
                 cleaned = raw.strip()
@@ -530,13 +591,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "recommend_product",
-            "description": "Recommend astrology products like rudraksha, mala, or bracelets. Call this when the user asks about products, wants to buy/wear rudraksha, asks for product recommendations, or mentions specific product names.",
+            "description": "Recommend astrology products like rudraksha, mala, or bracelets. Call this when the user asks about products, wants to buy/wear rudraksha, asks for product recommendations, or mentions specific product names. Catalog carries: Rudraksha (1-14 Mukhi), Rudraksha Mala, Bracelets (energy/protection/planetary), Pendants. NO gemstones or yantras.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search_query": {
                         "type": "string",
-                        "description": "Search query for finding products, e.g. 'rudraksha bracelet' or '5 mukhi rudraksha'.",
+                        "description": "Specific product search query. Be precise — include mukhi number when the concern maps to a planet (Sun→1, Moon→2, Mars→3, Mercury→4, Jupiter→5, Venus→6, Saturn→7, Rahu→8, Ketu→9). Examples: '7 mukhi rudraksha', '5 mukhi rudraksha mala', 'protection bracelet'.",
                     },
                     "reasoning": {
                         "type": "string",
@@ -551,13 +612,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "suggest_consultant",
-            "description": "Suggest or connect the user with an astrologer or consultant. Call this when the user wants to talk to, consult, or find an astrologer or pandit.",
+            "description": "Suggest or connect the user with an astrologer or consultant. Call this when the user wants to talk to, consult, or find an astrologer or pandit. Best for: personalized chart analysis, complex questions, live readings, expert interpretation.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search_query": {
                         "type": "string",
-                        "description": "Search query for finding consultants, e.g. 'career astrologer' or 'relationship consultant'.",
+                        "description": "Consultant specialty search query. Include the area of expertise. Examples: 'career astrologer', 'relationship consultant', 'kundali reading pandit', 'vaastu expert'.",
                     },
                     "reasoning": {
                         "type": "string",
@@ -572,13 +633,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "book_pooja",
-            "description": "Book a puja, havan, homam, or religious ritual/service. Call this when the user wants to book or schedule a pooja or ritual.",
+            "description": "Book a puja, havan, homam, or religious ritual/service. Call this when the user wants to book or schedule a pooja or ritual. Best for: dosha removal, planetary shanti, life events (griha pravesh, marriage), urgent relief from difficult periods.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search_query": {
                         "type": "string",
-                        "description": "Search query for finding puja services, e.g. 'shani puja' or 'navgraha homam'.",
+                        "description": "Specific puja/ritual search query. Include the puja type or planetary focus. Examples: 'shani puja', 'navgraha shanti', 'mahamrityunjaya jaap', 'rudrabhishek', 'satyanarayan puja home'.",
                     },
                     "reasoning": {
                         "type": "string",
@@ -586,6 +647,112 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["search_query", "reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "confirm_booking",
+            "description": (
+                "Confirm and complete a puja or temple service booking that the user "
+                "selected from the suggestions. Call this when the user says 'book it', "
+                "'yes confirm', 'I want the first one', or otherwise agrees to book a "
+                "specific service shown in the booking suggestions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "service_id": {
+                        "type": "string",
+                        "description": "The ID of the service the user wants to book (from suggestions).",
+                    },
+                    "service_type": {
+                        "type": "string",
+                        "enum": ["home_puja", "temple"],
+                        "description": "Whether this is a home puja or temple service booking.",
+                    },
+                    "tier_id": {
+                        "type": "string",
+                        "description": "Optional tier/variant ID if the user picked a specific tier.",
+                    },
+                    "service_name": {
+                        "type": "string",
+                        "description": "Human-readable name of the service being booked.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["service_id", "service_type", "reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_consultation",
+            "description": (
+                "Book a 1:1 video call consultation with a pandit or astrologer. "
+                "Call this when the user wants to book a call, schedule a consultation, "
+                "or connect with a specific consultant shown in suggestions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "consultant_id": {
+                        "type": "string",
+                        "description": "The ID of the consultant/pandit to book with.",
+                    },
+                    "consultant_name": {
+                        "type": "string",
+                        "description": "Human-readable name of the consultant.",
+                    },
+                    "preferred_date": {
+                        "type": "string",
+                        "description": "Preferred date for the consultation (YYYY-MM-DD).",
+                    },
+                    "preferred_time": {
+                        "type": "string",
+                        "description": "Preferred time for the consultation (HH:MM).",
+                    },
+                    "concern": {
+                        "type": "string",
+                        "description": "Brief description of user's concern for the consultation.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["consultant_id", "reasoning"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_booking",
+            "description": (
+                "Show the user's booking history or check a booking status. "
+                "Call this when the user asks about their bookings, order status, "
+                "booking history, or wants to see past/upcoming puja bookings."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status_filter": {
+                        "type": "string",
+                        "enum": ["pending", "confirmed", "completed", "cancelled"],
+                        "description": "Optional filter for booking status.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of why this action was chosen.",
+                    },
+                },
+                "required": ["reasoning"],
             },
         },
     },
@@ -620,6 +787,9 @@ _TOOL_CALL_CONFIDENCE: dict[str, float] = {
     "recommend_product": 0.90,
     "suggest_consultant": 0.90,
     "book_pooja": 0.90,
+    "confirm_booking": 0.92,
+    "schedule_consultation": 0.90,
+    "check_booking": 0.90,
     "ask_clarification": 0.88,
     "respond_only": 0.85,
 }
@@ -649,21 +819,33 @@ class ToolCallPlanner:
         message: str,
         has_birth_details: bool,
         has_matchmaking_details: bool,
+        recent_messages: list[dict[str, str]] | None = None,
+        session_state: str | None = None,
     ) -> list[dict[str, str]]:
         context_lines = [
             f"has_birth_details={str(has_birth_details).lower()}",
             f"has_matchmaking_details={str(has_matchmaking_details).lower()}",
         ]
-        return [
+        if session_state:
+            context_lines.append(session_state)
+
+        msgs: list[dict[str, str]] = [
             {"role": "system", "content": self.system_prompt()},
-            {
-                "role": "user",
-                "content": (
-                    f"Context: {', '.join(context_lines)}\n\n"
-                    f"User message: {message}"
-                ),
-            },
         ]
+        if recent_messages:
+            for turn in recent_messages:
+                role = turn.get("role", "user")
+                content = turn.get("content", "")
+                if role in ("user", "assistant") and content:
+                    msgs.append({"role": role, "content": _truncate_for_planner(content)})
+        msgs.append({
+            "role": "user",
+            "content": (
+                f"Context: {', '.join(context_lines)}\n\n"
+                f"User message: {message}"
+            ),
+        })
+        return msgs
 
     async def plan(
         self,
@@ -672,28 +854,34 @@ class ToolCallPlanner:
         has_birth_details: bool,
         has_matchmaking_details: bool,
         is_authenticated: bool,
+        recent_messages: list[dict[str, str]] | None = None,
+        session_state: str | None = None,
     ) -> PlannerResult:
         if not self.groq_client.is_configured:
             return ConversationPlanner.fallback_result(
-                "Tool-call planner unavailable: GROQ_API_KEY not configured."
+                "Tool-call planner unavailable: LLM API key not configured."
             )
 
         messages = self._build_messages(
             message=message,
             has_birth_details=has_birth_details,
             has_matchmaking_details=has_matchmaking_details,
+            recent_messages=recent_messages,
+            session_state=session_state,
         )
 
         try:
             response_message = await self.groq_client.generate_with_tools(
                 messages,
                 tools=TOOL_DEFINITIONS,
-                model=settings.GROQ_MODEL,
                 temperature=0.1,
                 tool_choice="auto",
             )
         except Exception as exc:
-            logger.warning("ToolCallPlanner failed: %s", exc)
+            recovered = self._recover_from_failed_generation(exc, message, has_birth_details, has_matchmaking_details)
+            if recovered is not None:
+                return recovered
+            logger.warning("ToolCallPlanner failed: %s | msg_count=%d", exc, len(messages))
             return ConversationPlanner.fallback_result(
                 f"Tool-call planner error: {exc}"
             )
@@ -742,6 +930,55 @@ class ToolCallPlanner:
             reasoning=reasoning,
         )
 
+        return ConversationPlanner._normalize_plan(
+            result,
+            message=message,
+            has_birth_details=has_birth_details,
+            has_matchmaking_details=has_matchmaking_details,
+        )
+
+    @staticmethod
+    def _recover_from_failed_generation(
+        exc: Exception,
+        message: str,
+        has_birth_details: bool,
+        has_matchmaking_details: bool,
+    ) -> PlannerResult | None:
+        if not hasattr(exc, "response"):
+            return None
+        try:
+            body = exc.response.json()
+        except Exception:
+            return None
+        error = body.get("error") or {}
+        if error.get("code") != "tool_use_failed":
+            return None
+        failed = error.get("failed_generation", "")
+        match = re.search(r"<function=(\w+)\s*(\{.*?\})", failed, re.DOTALL)
+        if not match:
+            return None
+        fn_name = match.group(1)
+        try:
+            fn_args = json.loads(match.group(2))
+        except json.JSONDecodeError:
+            return None
+        if fn_name not in _TOOL_CALL_CONFIDENCE:
+            return None
+        logger.info("Recovered tool call from failed_generation: %s", fn_name)
+        reasoning = fn_args.pop("reasoning", fn_name)
+        action: PlannerAction = fn_name  # type: ignore[assignment]
+        confidence = _TOOL_CALL_CONFIDENCE[action]
+        should_call_tool = action in TOOL_ACTIONS
+        missing_info = fn_args.get("missing_information", [])
+        arguments = {k: v for k, v in fn_args.items() if k != "missing_information"}
+        result = PlannerResult(
+            action=action,
+            confidence=confidence,
+            arguments=arguments,
+            missing_information=missing_info if isinstance(missing_info, list) else [],
+            should_call_tool=should_call_tool,
+            reasoning=reasoning,
+        )
         return ConversationPlanner._normalize_plan(
             result,
             message=message,

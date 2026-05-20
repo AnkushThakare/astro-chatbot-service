@@ -45,6 +45,7 @@ packages/finetuning/
     evaluate_adapter.py
     compare_models.py
     run_full_cycle.py
+    package_outputs.py
   outputs/
     .gitkeep
     eval_runs/
@@ -165,6 +166,35 @@ There is also a ready-to-run notebook file at
 For Kaggle, use
 [kaggle_run_full_cycle.ipynb](./kaggle_run_full_cycle.ipynb).
 
+## How To Package And Download Outputs
+
+If Google Drive mounting fails in Colab, do not use `drive.mount()` just to save the artifacts.
+Instead, package the outputs directly and download them from the notebook runtime.
+
+```bash
+python packages/finetuning/scripts/package_outputs.py --download
+```
+
+What this does:
+
+- scans `packages/finetuning/outputs/`
+- refuses to create an empty zip if only placeholder files exist
+- creates `packages/finetuning/finetuning_outputs.zip`
+- triggers a direct Colab download when available
+
+If you only want the archive without an automatic browser download:
+
+```bash
+python packages/finetuning/scripts/package_outputs.py
+```
+
+If you want a custom archive path:
+
+```bash
+python packages/finetuning/scripts/package_outputs.py \
+  --archive_path /content/astro-chatbot-service/finetuning_outputs.zip
+```
+
 ## How To Test Adapter
 
 After training:
@@ -260,6 +290,16 @@ Cause:
 Fix:
 - run `validate_dataset.py`
 - correct the reported rows before training
+
+### Google Drive mount error in Colab
+
+Example:
+- `MessageError: Error: credential propagation was unsuccessful`
+
+Fix:
+- skip Google Drive for this workflow
+- run `package_outputs.py --download`
+- download the generated zip directly from Colab
 
 ## Next Steps For Connecting To FastAPI
 

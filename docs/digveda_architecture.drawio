@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-05-21" agent="Claude" version="21.0.0">
+  <diagram id="digveda-arch" name="Digveda AI Architecture">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="Digveda AI Chatbot — System Architecture" style="text;html=1;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;whiteSpace=wrap;fillColor=none;strokeColor=none;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="400" y="15" width="800" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ CLIENT LAYER ═══════════════ -->
+        <mxCell id="client_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="30" y="70" width="280" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="client_label" value="CLIENT" style="text;html=1;fontSize=11;fontStyle=1;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="75" width="100" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="mobile" value="📱 Mobile App&#xa;(Flutter)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="110" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="web" value="🌐 Web App&#xa;(React)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="180" y="110" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="sse_label" value="SSE Stream&#xa;status → meta → deltas → done" style="text;html=1;fontSize=9;align=center;verticalAlign=middle;fillColor=#fff2cc;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="175" width="230" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ API GATEWAY ═══════════════ -->
+        <mxCell id="api_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="350" y="70" width="200" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="api_label" value="API LAYER (FastAPI)" style="text;html=1;fontSize=11;fontStyle=1;align=center;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7c4dff;" vertex="1" parent="1">
+          <mxGeometry x="360" y="75" width="180" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="chat_ep" value="POST /chat/message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="100" width="160" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="memory_ep" value="GET/DEL /chat/memories" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="133" width="160" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="kundali_ep" value="POST /kundali/generate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="166" width="160" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="other_ep" value="bookings | behavior | internal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="370" y="199" width="160" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Client → API -->
+        <mxCell id="arrow_client_api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#666666;strokeWidth=2;" edge="1" parent="1" source="mobile" target="chat_ep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ ORCHESTRATOR (ChatService) ═══════════════ -->
+        <mxCell id="orch_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9e6;strokeColor=#d4a017;strokeWidth=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="600" y="70" width="580" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="orch_label" value="ORCHESTRATOR — ChatService (chat_service.py)" style="text;html=1;fontSize=12;fontStyle=1;align=center;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#d4a017;" vertex="1" parent="1">
+          <mxGeometry x="660" y="75" width="460" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Row 1: Detection -->
+        <mxCell id="emotion" value="😤 Emotion&#xa;Detector" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffccbc;strokeColor=#e64a19;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="100" width="90" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lang_detect" value="🌐 Language&#xa;Detector" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffccbc;strokeColor=#e64a19;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="720" y="100" width="90" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="planner" value="🧠 Planner&#xa;(Gemini 3.5 Flash)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="100" width="130" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="router" value="🔀 Route&#xa;Decision" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffccbc;strokeColor=#e64a19;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="960" y="100" width="90" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Row 2: Context Assembly -->
+        <mxCell id="rag" value="📚 RAG Service&#xa;9-factor hybrid&#xa;180 chunks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3e5fc;strokeColor=#0277bd;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="160" width="110" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="memory_load" value="🧠 Memory&#xa;Loader&#xa;13 fact types" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3e5fc;strokeColor=#0277bd;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="160" width="100" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="chart_ctx" value="🪐 Chart&#xa;Context&#xa;lagna+dasha+transits" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3e5fc;strokeColor=#0277bd;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="160" width="120" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="catalog" value="🛒 Catalog&#xa;Matcher&#xa;products+pooja" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#b3e5fc;strokeColor=#0277bd;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="980" y="160" width="110" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Row 3: Gates + Generation -->
+        <mxCell id="rec_gate" value="🚦 Recommendation Gate&#xa;score ≥ 31 to recommend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffecb3;strokeColor=#ff8f00;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="230" width="170" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="remedy_flow" value="💊 Remedy Flow&#xa;dual-choice → simple first" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffecb3;strokeColor=#ff8f00;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="800" y="230" width="160" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="guardrail" value="🛡️ Catalog Guardrail&#xa;no gemstones/yantras" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffecb3;strokeColor=#ff8f00;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="970" y="230" width="150" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: API → Orchestrator -->
+        <mxCell id="arrow_api_orch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#9673a6;strokeWidth=2;" edge="1" parent="1" source="chat_ep" target="emotion">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ LLM GENERATION ═══════════════ -->
+        <mxCell id="llm_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="350" y="340" width="430" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="llm_label" value="LLM GENERATION" style="text;html=1;fontSize=11;fontStyle=1;align=center;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="480" y="345" width="180" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="persona" value="📜 Persona Builder&#xa;persona + memory + chart&#xa;+ RAG + user profile" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="370" width="160" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="style" value="🎨 Style Instruction&#xa;emotion + language&#xa;+ remedy hierarchy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="430" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="gemini" value="✨ Gemini 3.5 Flash&#xa;(Response LLM)&#xa;90-150 words, pandit voice" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#a5d6a7;strokeColor=#1b5e20;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="370" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="postprocess" value="✂️ Post-process&#xa;guardrail + trim + language enforce" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="560" y="430" width="200" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Orchestrator → LLM -->
+        <mxCell id="arrow_orch_llm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2e7d32;strokeWidth=2;" edge="1" parent="1" source="rec_gate" target="persona">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ ASYNC WORKERS ═══════════════ -->
+        <mxCell id="async_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c62828;dashed=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="830" y="340" width="350" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="async_label" value="ASYNC (after response sent)" style="text;html=1;fontSize=11;fontStyle=1;align=center;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="890" y="345" width="230" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="mem_extract" value="🧠 Memory Extractor&#xa;(Gemini 3.5 Flash)&#xa;name, concern, language,&#xa;tone, guidance_mode..." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c62828;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="370" width="155" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="behavior" value="📊 Behavior Tracker&#xa;energy flow, emotional&#xa;state, session alignment" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1015" y="370" width="145" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="persist" value="💾 Persist turns + session state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4ec;strokeColor=#c62828;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="870" y="442" width="280" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ DATA LAYER ═══════════════ -->
+        <mxCell id="db_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#7b1fa2;strokeWidth=2;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="30" y="530" width="1150" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="db_label" value="DATA LAYER" style="text;html=1;fontSize=12;fontStyle=1;align=center;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7b1fa2;" vertex="1" parent="1">
+          <mxGeometry x="510" y="535" width="180" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="postgres" value="🐘 PostgreSQL&#xa;&#xa;users | conversations&#xa;messages | memories&#xa;bookings | energy_flow" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#e1bee7;strokeColor=#7b1fa2;fontSize=10;fontStyle=1;size=10;" vertex="1" parent="1">
+          <mxGeometry x="50" y="560" width="160" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="pgvector" value="🔍 pgvector&#xa;&#xa;180 RAG chunks&#xa;Gemini embedding-001&#xa;3072 dimensions&#xa;cosine similarity" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=10;fontStyle=1;size=10;" vertex="1" parent="1">
+          <mxGeometry x="240" y="560" width="160" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="redis" value="⚡ Redis&#xa;&#xa;rate limiting&#xa;session cache (2h TTL)&#xa;idempotency store" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;fontStyle=1;size=10;" vertex="1" parent="1">
+          <mxGeometry x="430" y="560" width="150" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="rag_files" value="📁 RAG Content&#xa;&#xa;25 astrology files&#xa;pandit-voice chunks&#xa;140-180 words each&#xa;scenario-first format" style="shape=document;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;fontSize=10;fontStyle=1;size=0.15;" vertex="1" parent="1">
+          <mxGeometry x="610" y="560" width="150" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="prompts" value="📝 Prompts&#xa;&#xa;persona_v1.txt&#xa;planner.txt&#xa;memory_extractor.txt&#xa;conversation_summarizer.txt" style="shape=document;whiteSpace=wrap;html=1;fillColor=#fff9c4;strokeColor=#f9a825;fontSize=10;size=0.15;" vertex="1" parent="1">
+          <mxGeometry x="790" y="560" width="170" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="memory_table" value="🧠 Memory Table&#xa;&#xa;fact_key → fact_value&#xa;user-scoped (cross-session)&#xa;session-scoped (anonymous)&#xa;13 personality fact types" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8eaf6;strokeColor=#3f51b5;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="990" y="565" width="170" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ EXTERNAL SERVICES ═══════════════ -->
+        <mxCell id="ext_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#388e3c;dashed=1;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="30" y="280" width="280" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_label" value="EXTERNAL SERVICES" style="text;html=1;fontSize=11;fontStyle=1;align=center;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#388e3c;" vertex="1" parent="1">
+          <mxGeometry x="70" y="285" width="200" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="core_svc" value="🏛️ Core Service&#xa;(port 8002)&#xa;kundali compute&#xa;product catalog&#xa;pooja/consultant listings&#xa;user birth details" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="310" width="150" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="gemini_api" value="🤖 Google Gemini API&#xa;&#xa;gemini-3.5-flash (LLM)&#xa;gemini-embedding-001" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="420" width="160" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="langfuse" value="📈 Langfuse&#xa;observability" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="220" y="310" width="80" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ REQUEST FLOW ARROWS ═══════════════ -->
+        <!-- Orchestrator → RAG -->
+        <mxCell id="arrow_orch_rag" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0277bd;strokeWidth=1;dashed=1;" edge="1" parent="1" source="rag" target="pgvector">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Memory → Postgres -->
+        <mxCell id="arrow_mem_pg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7b1fa2;strokeWidth=1;dashed=1;" edge="1" parent="1" source="memory_load" target="postgres">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Chart → Core Service -->
+        <mxCell id="arrow_chart_core" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2e7d32;strokeWidth=1;dashed=1;" edge="1" parent="1" source="chart_ctx" target="core_svc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Catalog → Core Service -->
+        <mxCell id="arrow_cat_core" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2e7d32;strokeWidth=1;dashed=1;" edge="1" parent="1" source="catalog" target="core_svc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- LLM → Gemini API -->
+        <mxCell id="arrow_llm_gemini" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2e7d32;strokeWidth=2;" edge="1" parent="1" source="gemini" target="gemini_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Async → Postgres -->
+        <mxCell id="arrow_async_pg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#c62828;strokeWidth=1;dashed=1;" edge="1" parent="1" source="persist" target="postgres">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- Async → Memory Table -->
+        <mxCell id="arrow_async_mem" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#c62828;strokeWidth=1;dashed=1;" edge="1" parent="1" source="mem_extract" target="memory_table">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ FLOW NUMBERS ═══════════════ -->
+        <mxCell id="flow1" value="①" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#e64a19;" vertex="1" parent="1">
+          <mxGeometry x="600" y="100" width="25" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="flow2" value="②" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#0277bd;" vertex="1" parent="1">
+          <mxGeometry x="600" y="160" width="25" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="flow3" value="③" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#ff8f00;" vertex="1" parent="1">
+          <mxGeometry x="600" y="232" width="25" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="flow4" value="④" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="540" y="375" width="25" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="flow5" value="⑤" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="835" y="370" width="25" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- ═══════════════ FLOW LEGEND ═══════════════ -->
+        <mxCell id="legend_box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#bdbdbd;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="30" y="730" width="1150" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_title" value="REQUEST FLOW:" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="735" width="120" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text" value="① Detect: emotion + language + intent (planner) + route decision (FAST_CHAT / TOOL_FLOW / BLOCKED)&#xa;② Fetch context: RAG chunks (pgvector) + user memory (postgres) + birth chart (core service) + catalog items (core service) — all in parallel&#xa;③ Gates: recommendation gate (score ≥ 31) + remedy dual-choice (kya karu → simple vs detailed) + catalog guardrail (no gemstones/yantras)&#xa;④ Generate: persona prompt + style instruction + guardrails → Gemini 3.5 Flash → post-process → SSE stream to client&#xa;⑤ Async: extract 13 memory facts + track behavior + persist turns + update session state — does NOT delay response" style="text;html=1;fontSize=10;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#555;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="755" width="1130" height="45" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

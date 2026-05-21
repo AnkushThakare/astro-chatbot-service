@@ -1,70 +1,11 @@
-Common Astrology Concepts - Quick Reference
+Common Vedic Astrology Concepts
 
-Kundali (Birth Chart / Horoscope)
-A kundali is a map of the sky at the exact moment of a person's birth. It shows the positions of all nine planets (navagraha) across 12 houses and 12 zodiac signs. A kundali reading reveals personality traits, life patterns, strengths, challenges, and timing of major life events.
+A kundali is not a list of predictions — it is a map of the sky frozen at the exact moment you took your first breath. The positions of the nine planets (navagraha) across 12 houses and 12 zodiac signs at that precise second create a unique blueprint of your life's potential. To generate an accurate kundali, three things are essential: exact date of birth, exact time of birth (even a few minutes' difference shifts the lagna, which changes the entire chart), and the place of birth (for latitude, longitude, and timezone calculation). A kundali reveals personality patterns, natural talents, relationship dynamics, career aptitude, financial tendencies, and most importantly, the timing of when different life themes activate. Vedic astrology (Jyotish) is not about fixed destiny — it shows the terrain you are walking through and when the weather changes. Understanding your chart is like having a detailed travel map for life's journey.
 
-Requirements for generating a kundali:
-- Exact date of birth
-- Exact time of birth (as precise as possible)
-- Place of birth (for latitude, longitude, and timezone)
+The nine planets (navagraha) in Vedic astrology are not just celestial bodies — they are cosmic forces that shape personality and life events. Sun (Surya) governs your soul, authority, confidence, and relationship with father figures. Moon (Chandra) rules the mind, emotions, mother, and your inner world — in Vedic astrology, Moon sign matters more than Sun sign for daily predictions. Mars (Mangal) drives energy, courage, property matters, and physical vitality. Mercury (Budh) shapes intelligence, communication, business sense, and nervous system function. Jupiter (Guru) brings wisdom, wealth, children, and spiritual growth — it is the great benefic. Venus (Shukra) governs love, beauty, marriage, luxury, and creative expression. Saturn (Shani) teaches through discipline, delays, karma, and perseverance — feared but ultimately the most rewarding teacher. Rahu and Ketu are shadow planets (lunar nodes) representing worldly obsession and spiritual liberation respectively. Each planet's effect depends entirely on which house it sits in and which planets it aspects or conjoins.
 
-The 12 Houses (Bhava)
-1st House (Lagna/Ascendant): Self, personality, physical appearance, health
-2nd House: Wealth, family, speech, food habits
-3rd House: Siblings, courage, communication, short travel
-4th House: Mother, home, property, vehicles, comfort
-5th House: Children, education, creativity, romance, past-life merit
-6th House: Enemies, diseases, debts, daily work, service
-7th House: Marriage, partnerships, business, spouse
-8th House: Longevity, sudden events, inheritance, transformation
-9th House: Father, luck, dharma, long travel, higher learning, guru
-10th House: Career, profession, status, public image
-11th House: Gains, income, friends, aspirations, elder siblings
-12th House: Losses, expenses, foreign travel, spirituality, moksha
+The Vimshottari Dasha system is what makes Vedic astrology uniquely powerful — it answers not just "what" but "when." Life is divided into planetary periods that total 120 years. Each planet rules for a fixed duration: Ketu 7 years, Venus 20, Sun 6, Moon 10, Mars 7, Rahu 18, Jupiter 16, Saturn 19, Mercury 17. Your starting dasha is determined by the Moon's nakshatra at birth. The major period (mahadasha) is further divided into sub-periods (antardasha), creating a detailed timeline of which planetary energy dominates your life at any given time. When someone experiences sudden career growth, unexpected marriage, or a health crisis, the dasha almost always explains the timing. Understanding your current mahadasha and antardasha is like knowing which season of life you are in — it helps you make decisions aligned with planetary energy rather than fighting against it. A skilled astrologer reads the dasha alongside transits to pinpoint when specific life events are most likely.
 
-Navagraha (Nine Planets)
-Sun (Surya) - Soul, authority, father, government
-Moon (Chandra) - Mind, emotions, mother, public
-Mars (Mangal) - Energy, courage, property, siblings
-Mercury (Budh) - Intelligence, communication, business
-Jupiter (Guru/Brihaspati) - Wisdom, wealth, children, spirituality
-Venus (Shukra) - Love, beauty, luxury, marriage
-Saturn (Shani) - Discipline, karma, delays, longevity
-Rahu - Illusion, foreign connections, obsessions
-Ketu - Spirituality, detachment, past-life karma
+Transits (gochar) are the current positions of planets moving through the zodiac compared against your birth chart. While dasha reveals which planet's energy dominates your life period, transit shows the day-to-day and month-to-month weather changes. Saturn changes sign approximately every 2.5 years, creating major life shifts wherever it transits. Jupiter moves through a sign in about 1 year, opening opportunities and expansion in that house's themes. Rahu and Ketu change signs roughly every 18 months, bringing obsessive focus and detachment to new life areas. The double transit theory says that when both Saturn and Jupiter simultaneously aspect the same house in your chart, that house's themes get powerfully activated — marriages happen, career changes occur, children are born. Transits are most impactful when they align with the running dasha. Saturn transiting your 10th house during Saturn mahadasha is a far more intense career restructuring than the same transit during Jupiter mahadasha.
 
-Important Yogas (Combinations)
-Raj Yoga: Combination promising power, authority, success
-Gaja Kesari Yoga: Jupiter in kendra from Moon — wisdom and reputation
-Mangal Dosha: Mars in 1st, 2nd, 4th, 7th, 8th, or 12th house — affects marriage compatibility
-Kaal Sarp Dosha: All planets between Rahu and Ketu — struggles and sudden changes
-Sade Sati: Saturn transiting over natal Moon (7.5 year period) — tests and transformation
-
-Dasha System
-The Vimshottari Dasha system divides a person's life into planetary periods:
-- Each planet rules for a fixed number of years
-- The dasha sequence depends on the Moon's nakshatra at birth
-- Major periods (Mahadasha) are subdivided into sub-periods (Antardasha)
-- Understanding current dasha helps explain what phase of life a person is in
-
-Guna Milan (Matchmaking)
-Traditional Vedic matchmaking compares two kundalis across 8 categories (Ashtakoota):
-- Varna (1 point) - Spiritual compatibility
-- Vashya (2 points) - Mutual attraction
-- Tara (3 points) - Health and well-being
-- Yoni (4 points) - Sexual compatibility
-- Graha Maitri (5 points) - Mental compatibility
-- Gana (6 points) - Temperament match
-- Bhakoot (7 points) - Family and financial harmony
-- Nadi (8 points) - Health and genetic compatibility
-
-Total: 36 points. Generally 18+ points is considered acceptable for marriage.
-
-Transit (Gochar)
-Transits refer to the current positions of planets as they move through the zodiac, compared against the natal chart. Important transits include:
-- Saturn transit (Shani Gochar) - changes every ~2.5 years per sign
-- Jupiter transit (Guru Gochar) - changes every ~1 year per sign
-- Rahu-Ketu transit - changes every ~1.5 years
-
-Nakshatra (Lunar Mansions)
-The 27 nakshatras are divisions of the zodiac based on the Moon's position. Each nakshatra has unique characteristics, ruling deity, and associated planet. Birth nakshatra determines the starting dasha and influences personality.
+Guna Milan (Ashtakoota matchmaking) is the traditional Vedic system for comparing two kundalis before marriage. Eight categories are scored totaling 36 points: Varna (spiritual compatibility, 1 point), Vashya (mutual attraction, 2 points), Tara (health compatibility, 3 points), Yoni (physical compatibility, 4 points), Graha Maitri (mental wavelength, 5 points), Gana (temperament match, 6 points), Bhakoot (family harmony, 7 points), and Nadi (genetic and health compatibility, 8 points — the most critical). A score of 18 or above out of 36 is generally considered acceptable. However, experienced astrologers look beyond just the number — Nadi dosha alone can override a high score, and Mangal Dosha analysis is done separately. Guna Milan is a starting filter, not the final answer. The 7th house lord placement, Venus condition, and current dasha timing for both partners matter just as much as the point score. Marriage compatibility is a multi-layered reading, not a single number.

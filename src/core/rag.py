@@ -120,13 +120,14 @@ class RAGService:
         },
     }
     TOPIC_KEYWORDS = {
-        "career": {"career", "job", "profession", "promotion", "work"},
+        "career": {"career", "job", "profession", "promotion", "office", "workplace"},
         "finance": {"finance", "money", "wealth", "income", "business"},
         "health": {"health", "stress", "sleep", "routine", "wellbeing"},
         "love": {"love", "relationship", "marriage", "partner", "compatibility"},
         "spirituality": {"spirituality", "meditation", "inner", "retreat", "prayer"},
-        "remedies": {"remedy", "remedies", "rudraksha", "bracelet", "mala", "upay"},
-        "booking": {"puja", "pooja", "temple", "havan", "homam", "pandit"},
+        "remedies": {"remedy", "remedies", "rudraksha", "bracelet", "mala", "pendant", "catalog", "product", "products", "upay"},
+        "booking": {"puja", "pooja", "temple", "havan", "homam", "pandit", "consultation", "consultant", "astrologer", "video", "call", "muhurat"},
+        "timing": {"muhurat", "shubh", "auspicious", "timing"},
         "kundali": {"kundali", "kundli", "chart", "birth", "house", "planet"},
     }
     TOPIC_ASTRO_EXPANSIONS = {
@@ -135,8 +136,9 @@ class RAGService:
         "health": {"houses": {1, 6, 8}, "terms": {"6th house", "health", "routine", "mars", "saturn"}},
         "love": {"houses": {5, 7}, "terms": {"5th house", "7th house", "marriage", "partner", "venus", "moon"}},
         "spirituality": {"houses": {9, 12}, "terms": {"9th house", "12th house", "moksha", "guru", "ketu"}},
-        "remedies": {"houses": set(), "terms": {"remedy", "upay", "mantra", "rudraksha", "donation"}},
-        "booking": {"houses": set(), "terms": {"puja", "pooja", "pandit", "temple", "havan"}},
+        "remedies": {"houses": set(), "terms": {"remedy", "upay", "mantra", "rudraksha", "bracelet", "pendant", "product", "catalog", "donation"}},
+        "booking": {"houses": set(), "terms": {"puja", "pooja", "pandit", "temple", "havan", "consultation", "consultant", "astrologer", "video call"}},
+        "timing": {"houses": set(), "terms": {"muhurat", "shubh", "auspicious", "timing"}},
         "kundali": {"houses": {1}, "terms": {"kundali", "chart", "lagna", "ascendant"}},
     }
     PLANET_ALIASES = {
@@ -694,8 +696,10 @@ class RAGService:
         top_k: int | None = None,
     ) -> RetrievalCorpus:
         file_documents = self._documents()
+        requested_top_k = top_k or settings.RAG_TOP_K
+        candidate_top_k = self._candidate_limit(requested_top_k)
         embedding_documents = (
-            self._embedding_documents_for_queries(query_seeds or [], top_k=top_k or settings.RAG_TOP_K)
+            self._embedding_documents_for_queries(query_seeds or [], top_k=candidate_top_k)
             if query_seeds
             else self._embedding_documents()
         )
@@ -879,16 +883,21 @@ class RAGService:
     def _excerpt_for_query(content: str, query_terms: list[str]) -> str:
         if not content:
             return ""
+        # Return full chunk text (chunks are already 140-180 words by design)
+        # so the LLM can use the complete self-contained paragraph.
+        if len(content) <= 900:
+            return content
+        # For unusually long content, extract a generous window around the best match.
         lowered = content.lower()
         match_index = min(
             (lowered.find(term) for term in query_terms if lowered.find(term) != -1),
             default=-1,
         )
         if match_index == -1:
-            return content[:220]
+            return content[:900]
 
-        start = max(match_index - 80, 0)
-        end = min(start + 220, len(content))
+        start = max(match_index - 300, 0)
+        end = min(start + 900, len(content))
         excerpt = content[start:end].strip()
         return excerpt if start == 0 else f"...{excerpt}"
 
@@ -1004,7 +1013,10 @@ class RAGService:
                 if action is not None and action in document.metadata.get("action_hints", [])
                 else 0
             )
-            topic_score = len(query_topics & set(document.metadata.get("topic_hints", []))) * 2
+            document_topics = set(document.metadata.get("topic_hints", []))
+            topic_score = len(query_topics & document_topics) * 2
+            if "timing" in query_topics and "timing" in document_topics:
+                topic_score += 8
             document_entities = document.metadata.get("astro_entities") or {}
             entity_score = cls._astro_entity_score(query_entities, document_entities)
             chart_score = cls._chart_match_score(chart_entities, document_entities)

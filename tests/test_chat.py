@@ -23,6 +23,21 @@ def test_infer_response_language_prefers_hinglish_for_hinglish_message() -> None
     assert ChatService._infer_response_language(message) == "hinglish"
 
 
+def test_derive_memory_facts_tracks_language_and_detail_preferences() -> None:
+    facts = ChatService._derive_memory_facts(
+        message="Mujhe career ke liye detailed guidance chahiye, main kaafi stressed hoon.",
+        emotion_label="anxious",
+        birth_details={"birth_datetime": "1990-01-01T12:00:00+00:00"},
+    )
+
+    assert facts["last_concern"] == "career"
+    assert facts["life_area"] == "career"
+    assert facts["language_preference"] == "hinglish"
+    assert facts["detail_preference"] == "detailed"
+    assert facts["guidance_mode"] == "reassuring"
+    assert facts["birth_details_status"] == "complete"
+
+
 def test_fast_greeting_reply_handles_simple_english_greeting() -> None:
     plan = PlannerResult(
         action="respond_only",
@@ -479,6 +494,27 @@ def test_response_style_context_handles_empty_explicit_product_results() -> None
     assert "no exact product items" in style.lower()
     assert "do not imply" in style.lower()
     assert "pandit consultation" in style.lower()
+
+
+def test_final_reply_guardrail_allows_richer_normal_responses_with_emojis() -> None:
+    plan = PlannerResult(
+        action="respond_only",
+        confidence=0.9,
+        arguments={},
+        missing_information=[],
+        should_call_tool=False,
+        reasoning="general guidance",
+    )
+
+    guardrail = ChatService._build_final_reply_guardrail(
+        message="Mujhe career ke baare mein thoda detail mein batao",
+        plan=plan,
+        emotion=type("Emotion", (), {"label": "calm", "emotion": "calm"})(),
+    )
+
+    assert "90 to 140 words" in guardrail
+    assert "1 to 2 emojis" in guardrail
+    assert "Roman-script Hinglish" in guardrail
 
 
 def test_chunk_text_prefers_sentence_like_streaming_chunks() -> None:
@@ -1405,6 +1441,108 @@ def test_complete_reply_context_uses_compact_session_context_and_trims_recent_hi
     ]
     assert trimmed_history[:-1] == [msg["content"] for msg in recent_messages[-4:]]
     assert trimmed_history[-1] == "What next for my career?"
+
+
+def test_complete_reply_context_exposes_user_profile_summary() -> None:
+    service = ChatService.__new__(ChatService)
+    service.settings = type(
+        "SettingsStub",
+        (),
+        {
+            "FAST_RAG_TOP_K": 2,
+            "RAG_TOP_K": 5,
+            "TOOL_TIMEOUT_SECONDS": 1,
+        },
+    )()
+
+    class _MemoryStub:
+        def long_term_context(self, session_id: str, user_id=None) -> str:  # noqa: ANN001, ANN202
+            del session_id, user_id
+            return (
+                "- language_preference: hinglish\n"
+                "- detail_preference: detailed\n"
+                "- guidance_mode: reassuring\n"
+                "- last_concern: career\n"
+                "- birth_details_status: complete"
+            )
+
+    class _RagStub:
+        def retrieve_context_bundle(self, *args, **kwargs):  # noqa: ANN202
+            del args, kwargs
+            return {"chunks": [], "knowledge_chunks": [], "policy_chunks": [], "retrieval_metadata": {}}
+
+    class _BehaviorStub:
+        def behavior_prompt_context(self, **kwargs):  # noqa: ANN202
+            del kwargs
+            return (
+                "Energy flow snapshot:\n"
+                "- Emotional state: elevated_stress\n"
+                "- Behavioral state: overthinking_loop"
+            )
+
+    service.memory_service = _MemoryStub()
+    service.rag_service = _RagStub()
+    service.energy_flow_service = _BehaviorStub()
+    service.planner = None
+    service.core_service_client = type("CoreStub", (), {})()
+
+    context = {
+        "scope_guardrail": {"allowed": True, "reason": "astrology_qa"},
+        "session_id": "session-2",
+        "message": "Mujhe career ke baare mein detail mein batao",
+        "plan": PlannerResult(
+            action="respond_only",
+            confidence=0.88,
+            arguments={},
+            missing_information=[],
+            should_call_tool=False,
+            reasoning="career guidance",
+        ),
+        "recent_messages": [],
+        "internal_user_id": 7,
+        "tool_execution_allowed": False,
+        "route_decision": ChatRouteDecision(
+            route="FAST_CHAT",
+            intent="respond_only",
+            confidence=0.88,
+            risk_level="low",
+            reason="astrology_qa",
+            should_call_tool=False,
+            needs_planner=False,
+        ),
+        "normalized_message": "Mujhe career ke baare mein detail mein batao",
+        "deferred_planner": False,
+        "effective_birth_details": None,
+        "route": type("Route", (), {"provider": "groq", "model": "test-model", "reasoning_profile": "fast-answer"})(),
+        "emotion": type("Emotion", (), {"label": "anxious", "emotion": "anxious"})(),
+        "tool_outputs": [],
+        "retrieval_matches": [],
+        "kundali_chart": None,
+        "kundali_summary": None,
+        "matchmaking_result": None,
+        "metadata_json": None,
+        "birth_details_followup": False,
+        "partial_birth_details": None,
+        "needs_birth_details": False,
+        "matchmaking_details": None,
+        "current_user": None,
+        "session_state": {
+            "main_concern": "career timing",
+            "last_user_goal": "job switch guidance",
+            "last_tool_summary": "Saturn mahadasha with 10th house pressure.",
+        },
+    }
+
+    enriched = asyncio.run(service._complete_reply_context(context))
+
+    assert "Persistent user profile:" in enriched["user_profile_summary"]
+    assert "career timing" in enriched["user_profile_summary"]
+    assert "Chart personalization is available right now." in enriched["user_profile_summary"]
+    assert any(
+        "Persistent user profile:" in item["content"]
+        for item in enriched["messages"]
+        if item["role"] == "system"
+    )
 
 
 def test_product_recommendation_trace_captures_soft_product_exposure() -> None:

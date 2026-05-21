@@ -79,7 +79,109 @@ def test_prepare_base_reply_context_uses_core_service_birth_details() -> None:
     # Route decision is initially respond_only (planner deferred); actual
     # intent is resolved later in _complete_reply_context by the planner.
     assert context["route_decision"].needs_planner is True
+
+
+def test_prepare_base_reply_context_persists_local_birth_details_after_user_row_resolution() -> None:
+    service = ChatService.__new__(ChatService)
+    service.settings = settings
+    saved_local: list[tuple[str, dict[str, object]]] = []
+    resolved_users: list[str] = []
+    service.memory_service = SimpleNamespace(
+        recent_messages=lambda session_id, limit: [],
+        get_session_state=lambda session_id: {},
+        repository=SimpleNamespace(get_session_state=lambda session_id: None),
+    )
+
+    def _resolve(current_user: AuthenticatedUser | None) -> int | None:
+        if current_user is None:
+            return None
+        resolved_users.append(current_user.user_id)
+        return 7
+
+    service._resolve_internal_user_id = _resolve  # type: ignore[method-assign]
+
+    class _CoreStub:
+        async def get_user_birth_profile(self, user_id: str, current_user: AuthenticatedUser):  # noqa: ANN202
+            del user_id, current_user
+            return None
+
+        async def get_user_birth_details(self, user_id: str, current_user: AuthenticatedUser):  # noqa: ANN202
+            del user_id, current_user
+            return {
+                "name": "Ada",
+                "latitude": 12.9716,
+                "longitude": 77.5946,
+                "birth_datetime": "1990-01-01T12:00:00+00:00",
+                "timezone_str": "Etc/UTC",
+            }
+
+        async def save_user_birth_details(self, user_id: str, payload: dict, current_user: AuthenticatedUser):  # noqa: ANN202
+            del user_id, payload, current_user
+            raise AssertionError("save_user_birth_details should not be called")
+
+    service.core_service_client = _CoreStub()
+    service.user_repository = SimpleNamespace(
+        get_birth_details=lambda ext_id: None,
+        save_birth_details=lambda ext_id, details: saved_local.append((ext_id, details.copy())) or True,
+        get_or_create=lambda ext_id: SimpleNamespace(id=7),
+    )
+
+    context = asyncio.run(
+        service._prepare_base_reply_context(
+            session_id="session-1b",
+            message="Show my kundali",
+            current_user=_current_user(),
+        )
+    )
+
+    assert resolved_users == ["user-123"]
+    assert saved_local
+    assert saved_local[0][0] == "user-123"
+    assert saved_local[0][1]["latitude"] == 12.9716
+    assert context["internal_user_id"] == 7
     assert context["needs_birth_details"] is False
+
+
+def test_prepare_base_reply_context_syncs_user_language_preference() -> None:
+    service = ChatService.__new__(ChatService)
+    service.settings = settings
+    language_updates: list[tuple[str, str]] = []
+    service.memory_service = SimpleNamespace(
+        recent_messages=lambda session_id, limit: [],
+        get_session_state=lambda session_id: {},
+        repository=SimpleNamespace(get_session_state=lambda session_id: None),
+    )
+    service._resolve_internal_user_id = lambda current_user: 7 if current_user else None  # type: ignore[method-assign]
+
+    class _CoreStub:
+        async def get_user_birth_profile(self, user_id: str, current_user: AuthenticatedUser):  # noqa: ANN202
+            del user_id, current_user
+            return None
+
+        async def get_user_birth_details(self, user_id: str, current_user: AuthenticatedUser):  # noqa: ANN202
+            del user_id, current_user
+            return None
+
+    service.core_service_client = _CoreStub()
+    service.user_repository = SimpleNamespace(
+        get_birth_details=lambda ext_id: None,
+        save_birth_details=lambda ext_id, details: True,
+        get_or_create=lambda ext_id: SimpleNamespace(id=7, preferred_language="en"),
+        update_language=lambda ext_id, language: language_updates.append((ext_id, language)) or SimpleNamespace(
+            id=7,
+            preferred_language=language,
+        ),
+    )
+
+    asyncio.run(
+        service._prepare_base_reply_context(
+            session_id="session-lang-1",
+            message="Mujhe career ke liye guidance chahiye",
+            current_user=_current_user(),
+        )
+    )
+
+    assert language_updates == [("user-123", "hi")]
 
 
 def test_prepare_base_reply_context_saves_birth_details_followup_to_core_service() -> None:

@@ -9,6 +9,7 @@ from src.api.bookings import router as bookings_router
 from src.api.chat import router as chat_router
 from src.api.health import router as health_router
 from src.api.internal import router as internal_router
+from src.api.memory import router as memory_router
 from src.api.kundali import router as kundali_router
 from src.api.matchmaking import router as matchmaking_router
 from src.api.notifications import router as notifications_router
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(matchmaking_router, tags=["matchmaking"])
     app.include_router(bookings_router, tags=["bookings"])
     app.include_router(notifications_router, tags=["notifications"])
+    app.include_router(memory_router, tags=["memory"])
     app.include_router(behavior_router, prefix=settings.API_V1_PREFIX, tags=["behavior"])
     app.include_router(health_router, prefix=settings.API_V1_PREFIX, tags=["health"])
     app.include_router(internal_router, prefix=settings.API_V1_PREFIX, tags=["internal"])
@@ -77,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(matchmaking_router, prefix=settings.API_V1_PREFIX, tags=["matchmaking"])
     app.include_router(bookings_router, prefix=settings.API_V1_PREFIX, tags=["bookings"])
     app.include_router(notifications_router, prefix=settings.API_V1_PREFIX, tags=["notifications"])
+    app.include_router(memory_router, prefix=settings.API_V1_PREFIX, tags=["memory"])
     return app
 
 

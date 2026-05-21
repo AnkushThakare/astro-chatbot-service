@@ -22,6 +22,7 @@ revision = "004_add_pgvector_support"
 down_revision = "003_drop_birth_charts_table"
 branch_labels = None
 depends_on = None
+_IVFFLAT_MAX_DIMENSIONS = 2000
 
 
 def upgrade() -> None:
@@ -34,10 +35,11 @@ def upgrade() -> None:
             "embeddings",
             sa.Column("vector_pg", PgVector(settings.RAG_EMBEDDING_DIMENSIONS), nullable=True),
         )
-        op.execute(
-            "CREATE INDEX IF NOT EXISTS ix_embeddings_vector_pg "
-            "ON embeddings USING ivfflat (vector_pg vector_cosine_ops) WITH (lists = 100)"
-        )
+        if settings.RAG_EMBEDDING_DIMENSIONS <= _IVFFLAT_MAX_DIMENSIONS:
+            op.execute(
+                "CREATE INDEX IF NOT EXISTS ix_embeddings_vector_pg "
+                "ON embeddings USING ivfflat (vector_pg vector_cosine_ops) WITH (lists = 100)"
+            )
     else:
         op.add_column("embeddings", sa.Column("vector_pg", sa.Text(), nullable=True))
 

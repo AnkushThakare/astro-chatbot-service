@@ -303,6 +303,7 @@ class ConversationPlanner:
 
     @classmethod
     def _infer_explicit_action(cls, message: str) -> PlannerAction | None:
+        lowered = message.lower()
         tokens = set(cls._clean_tokens(message))
 
         if "matchmaking" in tokens:
@@ -310,10 +311,16 @@ class ConversationPlanner:
         if tokens & MATCHMAKING_TOKENS and ("milan" in tokens or "match" in tokens or "matching" in tokens):
             return "matchmaking"
         if tokens & CONSULTANT_TOKENS and (
-            tokens & {"call", "chat", "connect", "consult", "find", "talk", "want"}
+            tokens & {"call", "chat", "connect", "consult", "find", "need", "speak", "talk", "want"}
         ):
             return "suggest_consultant"
+        capability_booking_question = (
+            "digveda" in lowered
+            and ("can i book" in lowered or "can we book" in lowered or "is booking available" in lowered)
+        )
         if tokens & BOOKING_TOKENS and (tokens & {"book", "booking", "home", "temple", "want"}):
+            if capability_booking_question:
+                return None
             return "book_pooja"
         if tokens & PRODUCT_TOKENS and (
             tokens & REQUEST_VERBS or "price" in tokens or len(tokens) <= 5

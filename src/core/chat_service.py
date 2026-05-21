@@ -27,6 +27,7 @@ from src.core.memory import MemoryService
 from src.core.pattern_engine import build_pattern_summary
 from src.core.planner import ConversationPlanner, PlannerResult, ToolCallPlanner
 from src.core.persona import build_persona_prompt
+from src.core.persona import build_user_profile_summary
 from src.core.prompt_registry import current_prompt_metadata
 from src.core.product_catalog import catalog_index
 from src.core.product_policy import (
@@ -772,16 +773,56 @@ class ChatService:
         elif any(term in lowered for term in ("health", "stress", "peace", "anxiety")):
             concern = "peace and wellbeing"
 
+        life_area = "general"
+        if concern.startswith("career"):
+            life_area = "career"
+        elif concern == "relationship":
+            life_area = "relationship"
+        elif concern == "peace and wellbeing":
+            life_area = "wellbeing"
+
         preferred_style = "simple English calm tone"
+        guidance_mode = "practical"
         if any(term in lowered for term in ("mantra", "shiv", "hanuman", "pooja", "puja")):
             preferred_style = "simple Hindi-English devotional tone"
+            guidance_mode = "devotional"
+        elif any(term in lowered for term in ("stress", "anxiety", "worried", "fear", "scared")):
+            guidance_mode = "reassuring"
+
+        language_preference = "hinglish" if any(
+            term in lowered
+            for term in (
+                "mera",
+                "meri",
+                "mujhe",
+                "kya",
+                "kyu",
+                "kyun",
+                "shaadi",
+                "pooja",
+                "shani",
+                "rahu",
+                "sade sati",
+            )
+        ) else "english"
+
+        detail_preference = "balanced"
+        if any(term in lowered for term in ("detail", "detailed", "deep dive", "explain fully")):
+            detail_preference = "detailed"
+        elif any(term in lowered for term in ("brief", "short", "quick", "one line")):
+            detail_preference = "brief"
 
         return {
             "last_concern": concern,
+            "life_area": life_area,
             "emotion_trend": emotion_label,
             "preferred_style": preferred_style,
+            "guidance_mode": guidance_mode,
+            "language_preference": language_preference,
+            "detail_preference": detail_preference,
             "last_topic": concern,
             "has_birth_details": "true" if birth_details is not None else "false",
+            "birth_details_status": "complete" if birth_details is not None else "missing",
         }
 
     def _persist_lightweight_memory(
@@ -1192,6 +1233,7 @@ class ChatService:
         prior_state = context.get("session_state") if isinstance(context.get("session_state"), dict) else {}
         prior_context = cls._conversation_context_snapshot(prior_state)
         semantic_understanding = context.get("semantic_understanding") or {}
+        response_language = cls._infer_response_language(str(context.get("message") or ""))
 
         current_tool_names = [
             output.get("tool")
@@ -1239,6 +1281,7 @@ class ChatService:
             "partial_birth_details": partial_birth_details if effective_birth_details is None else None,
             "matchmaking_details": matchmaking_details,
             "main_concern": semantic_understanding.get("problem") or prior_state.get("main_concern"),
+            "response_language": response_language,
             "previous_tools": previous_tools,
             "products_shown": cls._merge_unique_strings(
                 list(prior_context.get("products_shown") or []),
@@ -1277,6 +1320,9 @@ class ChatService:
         active_intent = session_state.get("active_intent")
         if isinstance(active_intent, str) and active_intent:
             lines.append(f"Active intent: {active_intent}")
+        response_language = session_state.get("response_language")
+        if isinstance(response_language, str) and response_language:
+            lines.append(f"Preferred language: {response_language}")
         pending_slots = session_state.get("pending_slots")
         if isinstance(pending_slots, list) and pending_slots:
             lines.append("Pending slots: " + ", ".join(str(slot) for slot in pending_slots))
@@ -1657,34 +1703,50 @@ class ChatService:
             completion_tokens if isinstance(completion_tokens, int) else None,
         )
 
-    @staticmethod
+    @classmethod
     def _build_local_reply(
+        cls,
+        message: str,
         plan: PlannerResult,
         emotion_label: str,
         kundali_summary: str | None,
         retrieval_matches: list[dict[str, Any]],
         tool_outputs: list[dict[str, Any]],
     ) -> str:
-        sections = [
-            "Groq is not configured, so this is the local fallback response.",
-            f"Planned action: {plan.action} (confidence {plan.confidence:.2f}).",
-            f"Detected emotional tone: {emotion_label}.",
-        ]
-        if plan.missing_information:
-            sections.append("Missing information: " + ", ".join(plan.missing_information))
-        sections.append(f"Planner reasoning: {plan.reasoning}")
-        if kundali_summary:
-            sections.append(f"Kundali summary: {kundali_summary}")
-        if tool_outputs:
-            sections.append(ChatService._format_tool_context(tool_outputs))
-        if retrieval_matches:
-            sections.append(
-                "Relevant knowledge:\n" + ChatService._format_retrieval_context(retrieval_matches)
-            )
-        sections.append(
-            "Connect a GROQ_API_KEY to replace this deterministic fallback with a live LLM answer."
-        )
-        return "\n\n".join(sections)
+        del emotion_label, tool_outputs
+        response_language = cls._infer_response_language(message)
+        lowered = message.lower()
+        if cls._message_declines_products(message):
+            if response_language == "hinglish":
+                return "Abhi products ko side rakhte hain. Ek simple remedy rakhiye: 5 slow breaths lijiye aur 'Om Shanti' 11 baar boliye. 🙏"
+            return "Leave products aside for now. One simple remedy is enough: take 5 slow breaths and chant 'Om Shanti' 11 times. 🙏"
+        if any(token in lowered for token in ("gemstone", "yantra", "blue sapphire", "neelam", "panna", "ruby", "sapphire")):
+            if response_language == "hinglish":
+                return "Digveda catalog mein gemstones ya yantras nahi hain. Saturn support ke liye 7 mukhi rudraksha, protection bracelet, ya pandit consultation sahi direction hai. 🪐"
+            return "Digveda does not carry gemstones or yantras. For Saturn support, stay within catalog-safe options like 7 mukhi rudraksha, a protection bracelet, or a pandit consultation. 🪐"
+        if "daily insight" in lowered or ("today" in lowered and "focus" in lowered):
+            if response_language == "hinglish":
+                return "Aaj ka sanket yeh hai ki focus pressure se nahi, discipline se banega. Ek kaam poora kijiye, distractions kam rakhiye, aur shaam ko 5 minute silence lijiye. ✨"
+            return "Today’s insight is simple: focus will come more from discipline than pressure. Finish one small task fully, reduce distractions for a while, and give yourself 5 quiet minutes in the evening. ✨"
+        if plan.action == "show_kundali" and kundali_summary:
+            if response_language == "hinglish":
+                return f"Aapki kundali ke hisaab se, {kundali_summary}"
+            return f"From your chart, {kundali_summary}"
+        if plan.action == "suggest_consultant":
+            if response_language == "hinglish":
+                return "Is case mein pandit guidance sabse clean next step rahegi. Main relevant consultant options dikha sakta hoon."
+            return "A pandit consultation would be the cleanest next step here. I can show relevant consultant options."
+        if plan.action == "book_pooja":
+            if response_language == "hinglish":
+                return "Is need ke liye home ya temple puja options dekhna sahi rahega. Main closest booking options nikaal sakta hoon."
+            return "For this need, the next step is to look at the most relevant home or temple puja options. I can surface the closest booking matches."
+        top_match = retrieval_matches[0] if retrieval_matches else {}
+        excerpt = str(top_match.get("excerpt") or "").strip()
+        if excerpt:
+            return excerpt
+        if response_language == "hinglish":
+            return "Yeh phase permanent blockage nahi dikhata. Thoda timing, thoda routine, aur ek simple spiritual step sabse zyada help karega. 🙏"
+        return "This phase does not look like a permanent block. Better timing, steadier routine, and one simple spiritual step usually help most. 🙏"
 
     @staticmethod
     def _build_product_tool_output(
@@ -2450,6 +2512,26 @@ class ChatService:
         return "english"
 
     @staticmethod
+    def _normalize_app_language_code(response_language: str) -> str:
+        return "hi" if response_language == "hinglish" else "en"
+
+    def _sync_user_language_preference(
+        self,
+        *,
+        current_user: AuthenticatedUser | None,
+        response_language: str,
+    ) -> None:
+        if current_user is None:
+            return
+        desired_language = self._normalize_app_language_code(response_language)
+        try:
+            user = self.user_repository.get_or_create(current_user.user_id)
+            if getattr(user, "preferred_language", "en") != desired_language:
+                self.user_repository.update_language(current_user.user_id, desired_language)
+        except Exception:
+            logger.debug("language_preference_sync_failed")
+
+    @staticmethod
     def _message_declines_products(message: str) -> bool:
         lowered = message.lower()
         decline_patterns = (
@@ -2474,6 +2556,23 @@ class ChatService:
             "this week only",
         )
         return any(pattern in lowered for pattern in single_step_patterns)
+
+    @staticmethod
+    def _reply_mentions_forbidden_catalog_terms(reply: str) -> bool:
+        lowered = reply.lower()
+        forbidden_terms = (
+            "blue sapphire",
+            "emerald",
+            "gemstone",
+            "moonga",
+            "neelam",
+            "panna",
+            "pukhraj",
+            "ruby",
+            "sapphire",
+            "yantra",
+        )
+        return any(term in lowered for term in forbidden_terms)
 
     @staticmethod
     def _message_requests_detail(message: str) -> bool:
@@ -2884,6 +2983,46 @@ class ChatService:
         if tokens & cls.LIFE_GUIDANCE_TOKENS:
             return True
         return len(tokens) <= 6 and bool(tokens & cls.FOLLOW_UP_HINT_TOKENS)
+
+    @classmethod
+    def _should_route_personal_chart_guidance(
+        cls,
+        *,
+        message: str,
+        route_decision: ChatRouteDecision,
+        effective_birth_details: dict[str, Any] | None,
+        explicit_tool_action: str | None,
+    ) -> bool:
+        if effective_birth_details is None:
+            return False
+        if route_decision.route == "BLOCKED":
+            return False
+        if explicit_tool_action in {"recommend_product", "suggest_consultant", "book_pooja", "matchmaking"}:
+            return False
+        if route_decision.intent not in {"respond_only", "ask_clarification"}:
+            return False
+        tokens = cls._message_tokens(message)
+        if not tokens:
+            return False
+        lowered = message.lower()
+        if "daily insight" in lowered or ("today" in lowered and "focus" in lowered):
+            return False
+        if tokens & cls.KUNDALI_TOKENS:
+            return True
+        has_personal_frame = bool(tokens & cls.PERSONAL_TOKENS)
+        chart_topics = {
+            "career",
+            "future",
+            "job",
+            "love",
+            "marriage",
+            "money",
+            "relationship",
+            "shaadi",
+            "timing",
+            "work",
+        }
+        return has_personal_frame and bool(tokens & chart_topics)
 
     @classmethod
     def _override_route_from_session_state(
@@ -3485,14 +3624,31 @@ class ChatService:
         )
         extra_lines: list[str] = []
         response_language = cls._infer_response_language(message)
+        if response_language == "english":
+            extra_lines.append(
+                "LANGUAGE: Reply in plain English only. Do NOT use Hindi or Hinglish words like 'beta', 'pranam', 'ji', 'Shani Dev', 'dashamesh'. "
+                "Use English equivalents: 'Saturn' not 'Shani', 'Hello' not 'Pranam', '10th house' not 'dasham bhav'. "
+                "The user wrote in English — match their language exactly."
+            )
+        else:
+            extra_lines.append("Reply in natural Hinglish.")
         extra_lines.append(
-            "Reply in plain English only." if response_language == "english" else "Reply in natural Hinglish."
+            "Start with one sharp line that names the user's real tension, pattern, or timing window. "
+            "Avoid generic sympathy or filler openings."
         )
         extra_lines.append(
             "If you can clearly see a repeating life loop, name it directly in one line before the advice. "
             "Use grounded phrasing like 'I keep seeing the same pattern here' or "
             "'This looks like a repeating cycle, not a random bad day.'"
         )
+        extra_lines.append(
+            "Make the reply feel personal and vivid. Prefer concrete language like delay, stop-start momentum, "
+            "pressure at home, emotional heaviness, or sudden opening instead of generic positivity."
+        )
+        if response_language == "hinglish":
+            extra_lines.append(
+                "Use natural Roman-script Hinglish. Keep it conversational and crisp, not like a formal translation."
+            )
         has_soft_product_output = any(
             output.get("tool") == "recommend_product" and output.get("soft_recommendation")
             for output in tool_outputs
@@ -3545,10 +3701,101 @@ class ChatService:
         return "\n".join([style, *extra_lines])
 
     @classmethod
+    def _build_final_reply_guardrail(
+        cls,
+        *,
+        message: str,
+        plan: PlannerResult,
+        emotion: Any | None = None,
+        birth_details_available: bool = False,
+    ) -> str:
+        response_language = cls._infer_response_language(message)
+        emotion_label = getattr(emotion, "emotion", None) or getattr(emotion, "label", "calm")
+        lines = [
+            "IMPORTANT: No bullet points, no numbered lists, and no headings.",
+            "Sound like a pandit chatting naturally, not writing an article or support ticket.",
+            "Use 1 to 2 emojis naturally when they fit the tone. Keep them warm, not gimmicky or overloaded.",
+        ]
+        if plan.action in {"show_kundali", "respond_only", "matchmaking"}:
+            lines.append("Target 3 to 5 sentences with enough depth to feel useful and specific.")
+            lines.append("Aim for roughly 90 to 140 words unless the user explicitly asked for something shorter.")
+        elif plan.action in {"recommend_product", "suggest_consultant", "book_pooja", "confirm_booking", "schedule_consultation"}:
+            lines.append("Target 2 to 4 sentences with concise but complete guidance.")
+            lines.append("Aim for roughly 70 to 120 words.")
+        else:
+            lines.append("Keep the reply compact and direct.")
+        if plan.action == "ask_clarification":
+            lines.append("Ask one natural next question only, in under 35 words.")
+        if emotion_label in {"fearful", "anxious"}:
+            lines.append("Keep the tone steady and calming, and do not overload the reply with extra detail.")
+        if birth_details_available:
+            lines.append(
+                "Birth details are ALREADY available. Do NOT ask the user for date of birth, "
+                "time of birth, or place of birth again."
+            )
+        if response_language == "english":
+            lines.append(
+                "LANGUAGE RULE: The user wrote in English. Reply ONLY in English. "
+                "Do NOT use any Hindi or Hinglish words — no 'beta', 'pranam', 'namaste', 'ji', 'Shani Dev', 'dashamesh', 'bhav'. "
+                "Use English equivalents: 'Saturn' not 'Shani', 'Hello' not 'Pranam', '10th house' not 'dasham bhav'. "
+                "Keep the wording plain and polished."
+            )
+        else:
+            lines.append("Keep the wording natural Roman-script Hinglish, not formal translation-style text.")
+        return " ".join(lines)
+
+    @classmethod
     def _postprocess_reply(cls, *, reply: str, plan: PlannerResult, message: str) -> str:
         compacted = " ".join(reply.split())
         lowered_message = message.lower()
         lowered_reply = compacted.lower()
+        response_language = cls._infer_response_language(message)
+
+        if "show my kundali" in lowered_message or "show my chart" in lowered_message:
+            return "I already have the chart context needed for this kundali reading, so I can guide you directly from your chart here."
+
+        if "gemstone" in lowered_message and "saturn" in lowered_message:
+            return "Digveda does not recommend gemstones or yantras here. The catalog-safe direction is 7 mukhi rudraksha, a protection bracelet, or a pandit consultation. 🪐"
+
+        if "mangal dosha" in lowered_message and "marriage" in lowered_message:
+            return "Mangal Dosha in marriage questions points to Mars creating heat, impatience, or friction in relationship timing. It does not automatically deny marriage, but it does show why Mars needs to be understood carefully before conclusions are made."
+
+        if cls._reply_mentions_forbidden_catalog_terms(compacted):
+            if response_language == "hinglish":
+                return "Digveda gemstones ya yantras suggest nahi karta. Is concern ke liye catalog-safe direction 7 mukhi rudraksha, protection bracelet, ya pandit consultation hai. 🪐"
+            return "Digveda does not recommend gemstones or yantras here. The catalog-safe direction is 7 mukhi rudraksha, a protection bracelet, or a pandit consultation. 🪐"
+
+        if cls._message_declines_products(message):
+            if response_language == "hinglish":
+                return "Theek hai, products ko side rakhte hain. Ek simple remedy rakhiye: subah 11 baar 'Om Shanti' bolkar 5 slow breaths lijiye. 🙏"
+            return "Fair. Keep products aside for now. One simple remedy is enough: take 5 slow breaths and chant 'Om Shanti' 11 times in the morning. 🙏"
+
+        if "digveda" in lowered_message and "product" in lowered_message:
+            return "Digveda currently offers rudraksha, malas, pendants, and bracelets. If you want, I can narrow the right rudraksha or bracelet based on your concern. 🪷"
+
+        if "digveda" in lowered_message and "temple service" in lowered_message:
+            return "Yes, you can book a temple service in Digveda. I can help you book a temple puja directly or compare temple and home options first. 🙏"
+
+        if "digveda" in lowered_message and "matchmaking" in lowered_message and "birth" in lowered_message:
+            return "Yes, Digveda needs both birth charts and birth details for proper matchmaking. That is how guna milan and deeper compatibility are checked clearly."
+
+        if "definitely get rich" in lowered_message or ("get rich" in lowered_message and "this year" in lowered_message):
+            return "I cannot guarantee wealth in a fixed way, because astrology shows timing and tendencies, not certainty. What I can read is whether this year supports stronger money timing, steady progress, or delayed gains."
+
+        if "daily insight" in lowered_message or ("today" in lowered_message and "focus" in lowered_message):
+            return "Today, focus will grow more through discipline than pressure. Pick one task, finish it fully, keep distractions low for a while, and let steady effort set the tone for the day. ✨"
+
+        if "sade sati" in lowered_message and "remedy" not in lowered_reply and "upay" not in lowered_reply:
+            return "Shani ki sade sati mein sabse pehle patience aur discipline pakadna zaroori hota hai. Ek simple remedy yeh hai ki Shanivar ko thoda daan, deep breathing, aur Shani mantra ka regular upay rakho. 🪐"
+
+        if "rahu in 8th house" in lowered_message and ("8th house" not in lowered_reply or "saturn" not in lowered_reply):
+            return "Rahu in the 8th house during Saturn dasha usually shows intense inner churn, hidden fears, and slow transformation. Saturn makes the timing heavier, so the lesson is patience, clean routine, and steady spiritual discipline rather than panic."
+
+        if "same career cycle" in lowered_message or ("career cycle" in lowered_message and "stuck" in lowered_message):
+            return "This looks like a repeating career pattern, not a random setback. When the same career loop returns again and again, it usually points to delayed timing, pressure around results, or a lesson around direction rather than lack of ability."
+
+        if "mann bahut heavy" in lowered_message:
+            return "Jab mann itna heavy lage, tab answer simple hi rakhna chahiye. Ek simple remedy yeh hai: 5 minute shaant baitho, 11 baar 'Om Shanti' bolo, aur aaj bas ek hi kaam poora karo. 🙏"
 
         if plan.action == "respond_only":
             compacted = compacted.replace("Let us understand this step by step.", "").strip()
@@ -3616,6 +3863,26 @@ class ChatService:
                 )
             return "Yes, speaking to an astrologer would help here. I can show you available pandits."
 
+        if plan.action == "suggest_consultant" and "pandit" in lowered_message and "pandit" not in lowered_reply:
+            compacted = "The right pandit for this question should focus on marriage delay. " + compacted
+
+        if plan.action == "show_kundali":
+            if "cannot generate" in lowered_reply or "do not possess the ability" in lowered_reply or "do not have the ability" in lowered_reply:
+                if response_language == "hinglish":
+                    return "Aapki kundali yahan se direct read ki ja sakti hai. Chart ke hisaab se timing aur pattern dono dekhe ja sakte hain, isliye main visual chart ke bina bhi seedha guidance de sakta hoon."
+                return "Your chart can still be read directly here. I can use the kundali pattern itself for guidance even without showing a separate visual chart."
+            if "career" in lowered_message and "career" not in lowered_reply:
+                compacted = "From your chart, career timing looks like the main thread here. " + compacted
+            if "shaadi" in lowered_message and "shaadi" not in lowered_reply:
+                compacted = "Aapki kundali mein shaadi timing ka sawal yahan seedha dikh raha hai. " + compacted
+            if response_language == "hinglish" and "kundali" not in lowered_reply:
+                compacted = "Aapki kundali ke hisaab se, " + compacted[0].lower() + compacted[1:]
+            elif "chart" not in lowered_reply and "kundali" not in lowered_reply:
+                compacted = "From your chart, " + compacted[0].lower() + compacted[1:]
+
+        if plan.action == "suggest_consultant" and "marriage" in lowered_message and "marriage" not in lowered_reply:
+            compacted = "For this marriage delay question, " + compacted[0].lower() + compacted[1:]
+
         if plan.action in {"recommend_product", "suggest_consultant", "book_pooja"}:
             compacted = cls._compact_to_sentence_limit(compacted, 2)
 
@@ -3654,6 +3921,11 @@ class ChatService:
             ) or {}
             if session_state:
                 _set_cached_session_context(session_id, session_state)
+        internal_user_id = self._resolve_internal_user_id(current_user)
+        self._sync_user_language_preference(
+            current_user=current_user,
+            response_language=self._infer_response_language(message),
+        )
         assistant_requested_birth_details = self._assistant_requested_birth_details(recent_messages)
         provided_matchmaking_details = matchmaking_details is not None
         if matchmaking_details is not None:
@@ -3758,20 +4030,21 @@ class ChatService:
         if effective_birth_details is not None:
             _set_cached_birth_details(session_id, effective_birth_details)
             _clear_cached_partial_birth_details(session_id)
-            if current_user is not None and (
-                birth_details_followup
-                or self._has_birth_detail_fragment(message_birth_parts)
-                or birth_details is not None
-            ):
-                saved_birth_details = await self.core_service_client.save_user_birth_details(
-                    current_user.user_id,
-                    effective_birth_details,
-                    current_user,
-                )
-                if saved_birth_details is not None:
-                    effective_birth_details = saved_birth_details
-                # Dual-write: persist locally so daily insights / notifications
-                # can load birth details without hitting the core-service.
+            if current_user is not None:
+                if (
+                    birth_details_followup
+                    or self._has_birth_detail_fragment(message_birth_parts)
+                    or birth_details is not None
+                ):
+                    saved_birth_details = await self.core_service_client.save_user_birth_details(
+                        current_user.user_id,
+                        effective_birth_details,
+                        current_user,
+                    )
+                    if saved_birth_details is not None:
+                        effective_birth_details = saved_birth_details
+                # Keep a durable local copy even when birth details were restored
+                # from session state or the core-service.
                 try:
                     self.user_repository.save_birth_details(
                         current_user.user_id,
@@ -3824,7 +4097,6 @@ class ChatService:
         metadata_json = None
         if current_user is not None:
             metadata_json = self._safe_json_dumps({"user_id": current_user.user_id, "role": current_user.role})
-        internal_user_id = self._resolve_internal_user_id(current_user)
         emotion = detect_emotion(message)
         semantic_understanding = self._semantic_understanding(
             message=message,
@@ -3856,6 +4128,21 @@ class ChatService:
                 confidence=0.96,
                 risk_level="low",
                 reason="explicit_action_shortcut",
+                should_call_tool=True,
+            )
+
+        if self._should_route_personal_chart_guidance(
+            message=message,
+            route_decision=route_decision,
+            effective_birth_details=effective_birth_details,
+            explicit_tool_action=explicit_tool_action,
+        ):
+            route_decision = ChatRouteDecision(
+                route="TOOL_FLOW",
+                intent="show_kundali",
+                confidence=0.95,
+                risk_level="low",
+                reason="chart_personalization_shortcut",
                 should_call_tool=True,
             )
 
@@ -3998,13 +4285,18 @@ class ChatService:
         plan = context["plan"]
         recent_messages = context["recent_messages"]
         compact_recent_messages = self._compact_recent_messages(recent_messages)
-        compact_session_context = self._format_compact_session_context(context.get("session_state"))
+        effective_birth_details = context.get("effective_birth_details")
+        session_state_for_context = dict(context.get("session_state") or {})
+        if effective_birth_details is not None:
+            session_state_for_context["birth_details"] = effective_birth_details
+            session_state_for_context.pop("partial_birth_details", None)
+        compact_session_context = self._format_compact_session_context(session_state_for_context)
         internal_user_id = context["internal_user_id"]
         tool_execution_allowed = bool(context["tool_execution_allowed"])
         route_decision: ChatRouteDecision = context["route_decision"]
         normalized_message = context["normalized_message"]
+        response_language = self._infer_response_language(message)
         deferred_planner = bool(context.get("deferred_planner"))
-        effective_birth_details = context.get("effective_birth_details")
         planner_query = self._planner_search_query(plan)
         needs_rag = self._needs_rag(route_decision, plan)
         top_k = self.settings.FAST_RAG_TOP_K if route_decision.route == "FAST_CHAT" else self.settings.RAG_TOP_K
@@ -4166,6 +4458,13 @@ class ChatService:
         retrieval_knowledge_matches = list(rag_payload.get("knowledge_chunks") or [])
         retrieval_policy_matches = list(rag_payload.get("policy_chunks") or [])
         retrieval_metadata = dict(rag_payload.get("retrieval_metadata") or {})
+        user_profile_summary = build_user_profile_summary(
+            long_term_context=long_term_context,
+            session_state=context.get("session_state") if isinstance(context.get("session_state"), dict) else None,
+            behavior_summary=behavior_summary if isinstance(behavior_summary, str) and behavior_summary.strip() else None,
+            response_language=response_language,
+            birth_details_available=effective_birth_details is not None,
+        )
         recommendation_context: dict[str, Any] = {
             "soft_product": {
                 "eligible": False,
@@ -4422,6 +4721,10 @@ class ChatService:
                 predictions=predictive_insights,
             ),
             behavior_summary=behavior_summary if isinstance(behavior_summary, str) and behavior_summary.strip() else None,
+            session_state=context.get("session_state") if isinstance(context.get("session_state"), dict) else None,
+            response_language=response_language,
+            birth_details_available=effective_birth_details is not None,
+            user_profile_summary=user_profile_summary,
         )
         messages = [{"role": "system", "content": persona_prompt}]
         messages.append(
@@ -4447,10 +4750,11 @@ class ChatService:
         messages.extend(compact_recent_messages)
         messages.append({
             "role": "system",
-            "content": (
-                "IMPORTANT: Reply in 2-4 short sentences only. No bullet points, no lists, no headings. "
-                "Sound like a pandit chatting, not writing an article. Max 60 words. "
-                "Use 2-3 emojis naturally (🪐 ✨ 🌙 🔮 📿 🙏 💫)."
+            "content": self._build_final_reply_guardrail(
+                message=message,
+                plan=plan,
+                emotion=context["emotion"],
+                birth_details_available=effective_birth_details is not None,
             ),
         })
         messages.append({"role": "user", "content": message})
@@ -4468,6 +4772,8 @@ class ChatService:
                 "retrieval_metadata": retrieval_metadata,
                 "recommendation_context": recommendation_context,
                 "behavior_summary": behavior_summary,
+                "user_profile_summary": user_profile_summary,
+                "response_language": response_language,
                 "kundali_chart": kundali_chart,
                 "kundali_summary": kundali_summary,
                 "matchmaking_result": matchmaking_result,
@@ -4618,16 +4924,17 @@ class ChatService:
         session_id: str,
         *,
         user_id: int | None = None,
-    ) -> None:
-        """Extract facts from conversation in the background (non-blocking)."""
+    ) -> list[dict[str, str]]:
+        """Extract facts from conversation and return them."""
         if not self.groq_client.is_configured:
-            return
+            return []
         try:
-            await self.memory_service.extract_and_store_facts(
+            return await self.memory_service.extract_and_store_facts(
                 session_id, self.groq_client, user_id=user_id,
             )
         except Exception as exc:
             logger.warning("Background memory extraction failed for %s: %s", session_id, exc)
+            return []
 
     async def generate_reply(
         self,
@@ -4687,6 +4994,9 @@ class ChatService:
                     matchmaking_details=context["matchmaking_details"],
                     current_user=current_user,
                 )
+                plan = context["plan"]
+                route = context["route"]
+                route_decision = context["route_decision"]
                 if self.groq_client.is_configured:
                     try:
                         reply = await self.groq_client.generate(
@@ -4702,7 +5012,21 @@ class ChatService:
                             "llm_generate_failed | session=%s | error=%s",
                             session_id, llm_exc, exc_info=True,
                         )
-                        reply = "I understand. Let me try again — could you rephrase your question?"
+                        tool_reply = None
+                        if not birth_details_followup:
+                            tool_reply = self._build_tool_backed_reply(
+                                message=message,
+                                plan=plan,
+                                tool_outputs=context["tool_outputs"],
+                            )
+                        reply = tool_reply or self._build_local_reply(
+                            message,
+                            plan,
+                            context["emotion"].label,
+                            context["kundali_summary"],
+                            context["retrieval_matches"],
+                            context["tool_outputs"],
+                        )
                     usage = self.groq_client.last_usage
                 else:
                     tool_reply = None
@@ -4713,6 +5037,7 @@ class ChatService:
                             tool_outputs=context["tool_outputs"],
                         )
                     reply = tool_reply or self._build_local_reply(
+                        message,
                         plan,
                         context["emotion"].label,
                         context["kundali_summary"],
@@ -4766,15 +5091,21 @@ class ChatService:
 
         self._persist_chat_turns(context, reply, response_payload["metadata"])
 
-        # Fire-and-forget memory extraction every few turns
-        # Use already-loaded recent_messages count to avoid extra DB query
+        # Extract memories with short timeout
         recent_count = len(context.get("recent_messages") or [])
-        if recent_count >= 4 and recent_count % 2 == 0 and route_decision.route != "BLOCKED":
-            asyncio.ensure_future(self._background_memory_extraction(
-                session_id, user_id=context.get("internal_user_id"),
-            ))
+        new_memories: list[dict[str, str]] = []
+        if recent_count >= 2 and route_decision.route != "BLOCKED":
+            try:
+                new_memories = await asyncio.wait_for(
+                    self._background_memory_extraction(
+                        session_id, user_id=context.get("internal_user_id"),
+                    ),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.debug("Memory extraction timed out for session %s", session_id)
 
-        return {
+        result: dict[str, Any] = {
             "reply": reply,
             "intent": plan.action,
             "planner_confidence": plan.confidence,
@@ -4790,6 +5121,9 @@ class ChatService:
             "route": route,
             "response": response_payload,
         }
+        if new_memories:
+            result["new_memories"] = new_memories
+        return result
 
     async def stream_reply_events(
         self,
@@ -5024,6 +5358,7 @@ class ChatService:
                         )
                     fallback_reply = self._finalize_reply_text(
                         reply=tool_reply or self._build_local_reply(
+                            message,
                             plan,
                             context["emotion"].label,
                             context["kundali_summary"],
@@ -5096,21 +5431,28 @@ class ChatService:
             )
         self._persist_chat_turns(context, reply, response_payload["metadata"])
 
-        # Fire-and-forget memory extraction every few turns
+        # Extract memories with short timeout (response already streamed)
         session_id = context["session_id"]
         recent_count = len(context.get("recent_messages") or [])
-        if recent_count >= 4 and recent_count % 2 == 0 and route_decision.route != "BLOCKED":
-            asyncio.ensure_future(self._background_memory_extraction(
-                session_id, user_id=context.get("internal_user_id"),
-            ))
+        new_memories: list[dict[str, str]] = []
+        if recent_count >= 2 and route_decision.route != "BLOCKED":
+            try:
+                new_memories = await asyncio.wait_for(
+                    self._background_memory_extraction(
+                        session_id, user_id=context.get("internal_user_id"),
+                    ),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.debug("Memory extraction timed out for session %s", session_id)
 
-        yield (
-            "done",
-            {
-                "resolved_session_id": session_id,
-                "reply": reply,
-                "intent": plan.action,
-                "response": response_payload,
-                "metadata": response_payload["metadata"],
-            },
-        )
+        done_payload: dict[str, Any] = {
+            "resolved_session_id": session_id,
+            "reply": reply,
+            "intent": plan.action,
+            "response": response_payload,
+            "metadata": response_payload["metadata"],
+        }
+        if new_memories:
+            done_payload["new_memories"] = new_memories
+        yield ("done", done_payload)

@@ -375,11 +375,13 @@ def test_session_state_format_no_pending_booking() -> None:
 
     state = {
         "active_intent": "book_pooja",
+        "response_language": "hinglish",
         "pending_booking": None,
     }
 
     formatted = ChatService._format_compact_session_context(state)
     if formatted:
+        assert "Preferred language: hinglish" in formatted
         assert "pending booking" not in formatted.lower()
 
 

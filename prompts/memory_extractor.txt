@@ -24,6 +24,12 @@ Examples of good facts to extract:
 - User's life stage (student, working, retired, etc.)
 - Financial situation context if shared (business owner, salaried, etc.)
 - Number of siblings, children, or family details if shared
+- Whether user prefers brief or detailed answers (fact_key: "detail_preference", values: "brief" or "detailed")
+- User's preferred guidance style (fact_key: "guidance_mode", values: "reassuring", "devotional", or "practical")
+- Whether user has shared complete birth details (fact_key: "birth_details_status", values: "complete" or "partial")
+- User's main life concern or recurring topic (fact_key: "last_concern", e.g., "career growth", "marriage delay", "health issues")
+- Broad life area the user keeps returning to (fact_key: "life_area", values: "career", "marriage", "health", "finance", "education", "family")
+- User's emotional communication style (fact_key: "emotional_tone", values: "anxious", "calm", "spiritual", "direct", "confused")
 
 Do NOT extract:
 - Birth details (date, time, place) — these are handled separately

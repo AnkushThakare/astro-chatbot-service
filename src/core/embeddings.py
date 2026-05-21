@@ -28,7 +28,6 @@ SEMANTIC_EQUIVALENTS = {
     "job": "career",
     "jobs": "career",
     "profession": "career",
-    "work": "career",
     "promotion": "career",
     "salary": "money",
     "income": "money",

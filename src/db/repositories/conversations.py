@@ -207,6 +207,29 @@ class ConversationRepository:
         current.update(updates)
         return self.save_session_state(session_id, current, user_id=user_id)
 
+    def delete_fact_by_id(self, fact_id: int, *, user_id: int) -> bool:
+        """Delete a single memory by ID, scoped to the user."""
+        statement = select(Memory).where(Memory.id == fact_id, Memory.user_id == user_id)
+        row = self.db.execute(statement).scalar_one_or_none()
+        if row is None:
+            return False
+        self.db.delete(row)
+        self.db.commit()
+        return True
+
+    def delete_all_facts_for_user(self, user_id: int) -> int:
+        """Delete all memories for a user. Returns count deleted."""
+        statement = select(Memory).where(
+            Memory.user_id == user_id,
+            Memory.fact_key != self.SESSION_STATE_FACT_KEY,
+        )
+        rows = self.db.execute(statement).scalars().all()
+        count = len(rows)
+        for row in rows:
+            self.db.delete(row)
+        self.db.commit()
+        return count
+
     def update_conversation_summary(self, session_id: str, summary: str) -> None:
         statement = select(Conversation).where(Conversation.session_id == session_id)
         conversation = self.db.execute(statement).scalar_one_or_none()

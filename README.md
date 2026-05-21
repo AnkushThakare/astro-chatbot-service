@@ -97,6 +97,21 @@ On Windows PowerShell:
 
 The Docker helper scripts automatically load `.env` when present. If `GROQ_API_KEY` is still unset, the planner falls back to `respond_only`, so the evaluation run is only validating the harness, not the live model.
 
+## Chatbot Quality Tracking
+
+Use these files to track whether chatbot changes are improving or damaging quality:
+
+- [docs/chatbot_quality_scorecard.md](/C:/Users/ankus/astro-chatbot-service/docs/chatbot_quality_scorecard.md)
+- [docs/chatbot_improvement_roadmap.md](/C:/Users/ankus/astro-chatbot-service/docs/chatbot_improvement_roadmap.md)
+- [data/chatbot_eval_examples.jsonl](/C:/Users/ankus/astro-chatbot-service/data/chatbot_eval_examples.jsonl)
+
+The intended workflow is:
+
+1. make a chatbot change
+2. run the benchmark set
+3. score the outputs against the scorecard
+4. only ship if there are no critical regressions
+
 ## Astrology Engine Modes
 
 This service keeps astrology behind an adapter boundary so the repo stays separate:

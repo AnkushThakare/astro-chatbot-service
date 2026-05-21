@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
@@ -92,7 +94,7 @@ class MemoryService:
         try:
             raw = await groq_client.generate(
                 [{"role": "user", "content": prompt}],
-                model=settings.GROQ_PLANNER_MODEL,
+                model=settings.PLANNER_LLM_MODEL or settings.GROQ_PLANNER_MODEL,
                 temperature=0.1,
                 response_format={"type": "json_object"},
             )

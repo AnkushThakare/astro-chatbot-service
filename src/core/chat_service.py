@@ -329,6 +329,29 @@ class ChatService:
         "consultant",
         "astrologer",
     }
+    REMEDY_SEEKING_PHRASES = {
+        "kya karu",
+        "kya karun",
+        "kya karein",
+        "kya karen",
+        "upay batao",
+        "upay bataye",
+        "upay bataiye",
+        "upay chahiye",
+        "koi upay",
+        "koi solution",
+        "koi remedy",
+        "solution batao",
+        "solution chahiye",
+        "what should i do",
+        "what can i do",
+        "any remedy",
+        "any solution",
+        "suggest remedy",
+        "suggest solution",
+        "how to fix",
+        "how to solve",
+    }
     PUBLIC_FIGURE_TOKENS = {
         "actor",
         "actress",
@@ -2511,6 +2534,30 @@ class ChatService:
             return "hinglish"
         return "english"
 
+    @classmethod
+    def _is_remedy_seeking_message(cls, message: str) -> bool:
+        """Detect when user is asking for remedies/solutions in a general way."""
+        lowered = message.lower()
+        return any(phrase in lowered for phrase in cls.REMEDY_SEEKING_PHRASES)
+
+    @classmethod
+    def _build_remedy_choice_reply(cls, message: str) -> str:
+        """Dual-choice reply: simple remedies vs detailed kundli guidance."""
+        response_language = cls._infer_response_language(message)
+        if response_language == "hinglish":
+            return (
+                "Iske liye do tarike hain — ek simple remedy jo aap abhi se ghar par kar sakte hain "
+                "(jaise mantra, daan, ya daily practice), ya phir kundli ke hisab se detailed guidance "
+                "jahan exact graha aur dasha dekh kar baat karein. "
+                "Aap kya chahenge — simple upay ya detailed chart-based margdarshan? 🙏"
+            )
+        return (
+            "There are two ways I can help — simple remedies you can start at home right away "
+            "(like a mantra, charity practice, or daily ritual), or detailed chart-based guidance "
+            "where we look at your exact planetary positions and timing. "
+            "Which would you prefer — simple remedies or detailed kundli guidance? 🙏"
+        )
+
     @staticmethod
     def _normalize_app_language_code(response_language: str) -> str:
         return "hi" if response_language == "hinglish" else "en"
@@ -3648,6 +3695,14 @@ class ChatService:
         if response_language == "hinglish":
             extra_lines.append(
                 "Use natural Roman-script Hinglish. Keep it conversational and crisp, not like a formal translation."
+            )
+        # Enforce simple-remedies-first hierarchy
+        tokens = cls._message_tokens(message)
+        if tokens & {"remedy", "remedies", "upay", "solution", "mantra", "help"}:
+            extra_lines.append(
+                "REMEDY HIERARCHY: Always suggest FREE/simple remedies FIRST (mantra, breathing, charity, daily practice). "
+                "Only mention a Digveda product or paid service as a gentle aside AFTER giving the free remedy. "
+                "The free remedy must be the main recommendation."
             )
         has_soft_product_output = any(
             output.get("tool") == "recommend_product" and output.get("soft_recommendation")
@@ -4978,6 +5033,14 @@ class ChatService:
                     route_decision.missing_slots,
                     context["emotion"],
                 )
+            # Remedy-seeking intercept: "kya karu", "upay batao" → dual-choice
+            remedy_choice_reply = None
+            if (
+                clarification_reply is None
+                and self._is_remedy_seeking_message(message)
+                and route_decision.intent in {"recommend_product", "respond_only", "book_pooja", "suggest_consultant"}
+            ):
+                remedy_choice_reply = self._build_remedy_choice_reply(message)
             # Keep greeting-only turns fast, but let substantive astrology
             # questions flow through RAG + LLM assembly.
             greeting_reply = self._build_fast_greeting_reply(message)
@@ -4985,6 +5048,8 @@ class ChatService:
                 reply = birth_details_capture_reply
             elif clarification_reply is not None:
                 reply = clarification_reply
+            elif remedy_choice_reply is not None:
+                reply = remedy_choice_reply
             elif greeting_reply is not None:
                 reply = greeting_reply
             else:
@@ -5222,6 +5287,14 @@ class ChatService:
                     route_decision.missing_slots,
                     context["emotion"],
                 )
+            # Remedy-seeking intercept: "kya karu", "upay batao" → dual-choice
+            remedy_choice_reply = None
+            if (
+                clarification_reply is None
+                and self._is_remedy_seeking_message(message)
+                and route_decision.intent in {"recommend_product", "respond_only", "book_pooja", "suggest_consultant"}
+            ):
+                remedy_choice_reply = self._build_remedy_choice_reply(message)
             # Keep greeting-only turns fast, but let substantive astrology
             # questions flow through RAG + LLM assembly.
             greeting_reply = self._build_fast_greeting_reply(message)
@@ -5247,6 +5320,19 @@ class ChatService:
                 )
                 reply_parts.append(clarification_reply)
                 for chunk in chunk_text(clarification_reply):
+                    if await _is_disconnected():
+                        stream_interrupted = True
+                        break
+                    yield ("message", {"delta": chunk})
+            elif remedy_choice_reply is not None:
+                yield _emit_meta()
+                remedy_choice_reply = self._finalize_reply_text(
+                    reply=remedy_choice_reply,
+                    plan=plan,
+                    message=message,
+                )
+                reply_parts.append(remedy_choice_reply)
+                for chunk in chunk_text(remedy_choice_reply):
                     if await _is_disconnected():
                         stream_interrupted = True
                         break
